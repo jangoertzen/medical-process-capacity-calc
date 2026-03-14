@@ -394,7 +394,7 @@ export function DayScheduleGantt({ scenario, nPatients }: Props) {
     weekSchedules.find(s => s.weekday === selectedDay) ??
     weekSchedules[0]
 
-  if (allSchedules.length === 0) {
+  if (allSchedules.length === 0 || !currentSchedule) {
     return <div style={{ color: '#64748b', padding: '1rem' }}>Keine aktiven Phasen konfiguriert.</div>
   }
 
@@ -475,12 +475,6 @@ export function DayScheduleGantt({ scenario, nPatients }: Props) {
         ))}
       </div>
 
-      {!currentSchedule ? (
-        <div style={{ color: '#94a3b8', padding: '1rem', fontSize: '0.85rem' }}>
-          In dieser Woche sind keine Patientenphasen aktiv.
-        </div>
-      ) : (<>
-
       {/* Controls row */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
 
@@ -488,7 +482,7 @@ export function DayScheduleGantt({ scenario, nPatients }: Props) {
         <div style={{ display: 'flex', gap: '0.25rem' }}>
           {WEEKDAY_ORDER.filter(wd => availableDays.includes(wd)).map(wd => {
             const sched = weekSchedules.find(s => s.weekday === wd)
-            const stages = sched?.activeStages.sort().map(s => `T${s}`).join('+') ?? ''
+            const stages = [...(sched?.activeStages ?? [])].sort().map(s => `T${s}`).join('+') ?? ''
             const isActive = selectedDay === wd
             return (
               <button
@@ -584,7 +578,6 @@ export function DayScheduleGantt({ scenario, nPatients }: Props) {
             ))
         }
       </div>
-      </>)}
     </div>
   )
 }

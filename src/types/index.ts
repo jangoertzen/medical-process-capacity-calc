@@ -52,6 +52,12 @@ export interface ScheduleConfig {
   startDays: Weekday[];
   visitDayOffsets: [0, number, number];
   lzAnlegenDay: 1 | 2;
+  /** Percentage of patients (0–100) who receive Langzeit-EKG & Langzeit-RR */
+  lzPercent: number;
+  /** Maximum patient stay per visit day in minutes (default 120) */
+  maxStayMinutes: number;
+  /** Whether to add a 5-minute break between each examination */
+  breakBetweenExams: boolean;
 }
 
 export interface ResourceConfig {

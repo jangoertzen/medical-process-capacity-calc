@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import type { WeeklyCapacityResult, DayCapacityResult, Weekday, DayNumber } from '@/types'
+import type { DayAnalysis } from '@/lib/scheduler'
 
 interface Props {
   results: WeeklyCapacityResult
+  actualSlotsByDay?: Map<number, DayAnalysis>
 }
 
 const WD_LABEL: Record<Weekday, string> = {
@@ -31,7 +33,7 @@ const WEEK_LABELS: Record<1 | 2 | 3, string> = {
   3: 'Woche 3 (Auslauf)',
 }
 
-export function WeeklyCalendar({ results }: Props) {
+export function WeeklyCalendar({ results, actualSlotsByDay }: Props) {
   const [selectedWeek, setSelectedWeek] = useState<1 | 2 | 3>(2)
 
   const threeWeekData: DayCapacityResult[] = results.threeWeekData ?? []
@@ -116,7 +118,7 @@ export function WeeklyCalendar({ results }: Props) {
                     <td key={wd} style={{ padding: '0.4rem', textAlign: 'center', border: '1px solid #e2e8f0' }}>
                       {day
                         ? <>
-                            {day.activeStages.sort().map(s => (
+                            {[...day.activeStages].sort().map(s => (
                               <span key={s} style={{
                                 display: 'inline-block', margin: '0 1px',
                                 padding: '1px 6px', borderRadius: '4px',
@@ -152,19 +154,27 @@ export function WeeklyCalendar({ results }: Props) {
                     if (!r) {
                       return <td key={wd} style={{ ...tdCenter, color: '#cbd5e1' }}>—</td>
                     }
+                    const analysis = day ? actualSlotsByDay?.get(day.absDay) : undefined
+                    const actual = analysis?.actualSlots[groupId]
+                    const hasConflict = actual !== undefined && actual < r.limitingCapacity
                     const bg = r.isBottleneck ? '#fef2f2' : utilizationColor(r.utilizationPct)
                     const textColor = utilizationTextColor(r.utilizationPct)
                     return (
                       <td key={wd} style={{ ...tdCenter, background: bg }}>
                         <div style={{ fontWeight: r.isBottleneck ? 700 : 500, color: r.isBottleneck ? '#b91c1c' : '#1e293b' }}>
-                          {r.limitingCapacity} Pat.
+                          {r.limitingCapacity} Slots
+                          {actual !== undefined && (
+                            <span style={{ fontSize: '0.65rem', color: hasConflict ? '#dc2626' : '#16a34a', marginLeft: '0.3rem' }}>
+                              ({actual} geplant)
+                            </span>
+                          )}
                         </div>
                         <div style={{ fontSize: '0.7rem', color: textColor, marginTop: '1px' }}>
                           {r.utilizationPct}% ausgelastet
                         </div>
                         {r.timePerPatientMin > 0 && (
                           <div style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
-                            {r.timePerPatientMin} min/Pat.
+                            {Math.round(r.timePerPatientMin * 10) / 10} min/Slot
                           </div>
                         )}
                         {r.isBottleneck && (
@@ -177,7 +187,7 @@ export function WeeklyCalendar({ results }: Props) {
               ))}
 
               <tr style={{ background: '#1e293b', color: '#f1f5f9' }}>
-                <td style={{ ...tdLeft, color: '#f1f5f9', fontWeight: 700 }}>Max Pat./Kohorte</td>
+                <td style={{ ...tdLeft, color: '#f1f5f9', fontWeight: 700 }}>Max Slots/Kohorte</td>
                 {ALL_WEEKDAYS.map(wd => {
                   const day = byWeekday.get(wd)
                   return (

@@ -64,8 +64,14 @@ export default function Untersuchungen() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <input type="range" min={1} max={60} value={exam.durationMin}
                       onChange={e => updateExamination(exam.id, { durationMin: Number(e.target.value) })}
-                      style={{ width: '100px' }} />
-                    <span style={{ minWidth: '2rem', textAlign: 'right' }}>{exam.durationMin}</span>
+                      style={{ width: '100px', accentColor: '#3b82f6' }} />
+                    <input type="number" min={1} max={60} value={exam.durationMin}
+                      className="no-spin"
+                      onChange={e => {
+                        const v = parseInt(e.target.value, 10)
+                        if (!isNaN(v) && v >= 1 && v <= 60) updateExamination(exam.id, { durationMin: v })
+                      }}
+                      style={{ width: '48px', padding: '0.2rem 0.35rem', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '0.85rem', color: '#1e293b', textAlign: 'right' }} />
                   </div>
                 </td>
                 <td style={tdS}>

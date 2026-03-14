@@ -13,9 +13,10 @@ export const defaultExaminations: Examination[] = [
   // Day 2
   { id: 'e09', day: 2, name: 'Langzeit-EKG abnehmen', room: 'Geräteraum', deviceCount: 4, staffRole: 'MFA', durationMin: 2, parallelWith: 'Langzeit-Blutdruck abnehmen', resourceGroupId: 'langzeit-ekg' },
   { id: 'e10', day: 2, name: 'Langzeit-Blutdruck abnehmen', room: 'Geräteraum', deviceCount: 4, staffRole: 'MFA', durationMin: 2, parallelWith: 'Langzeit-EKG abnehmen', resourceGroupId: 'langzeit-rr' },
-  { id: 'e11', day: 2, name: 'Fahrradergometrie', room: 'Ergometrieraum', deviceCount: 1, staffRole: 'MFA', durationMin: 20, parallelWith: null, resourceGroupId: 'ergometrie' },
   { id: 'e12', day: 2, name: 'Echokardiographie', room: 'Sono', deviceCount: null, staffRole: 'Arzt', durationMin: 15, parallelWith: 'Duplex hirnversorgende Gefäße', resourceGroupId: 'arzt-sono' },
   { id: 'e13', day: 2, name: 'Duplex hirnversorgende Gefäße', room: 'Sono', deviceCount: null, staffRole: 'Arzt', durationMin: 15, parallelWith: 'Echokardiographie', resourceGroupId: 'arzt-sono' },
+  // Ergometrie muss nach Echo/Duplex stattfinden (Reihenfolge ist relevant für Scheduler)
+  { id: 'e11', day: 2, name: 'Fahrradergometrie', room: 'Ergometrieraum', deviceCount: 1, staffRole: 'MFA', durationMin: 20, parallelWith: null, resourceGroupId: 'ergometrie' },
   // Day 3
   { id: 'e14', day: 3, name: 'Schilddrüsen-Sonographie', room: 'Sono', deviceCount: null, staffRole: 'Arzt', durationMin: 5, parallelWith: null, resourceGroupId: 'arzt-sono' },
   { id: 'e15', day: 3, name: 'Abschlussgespräch', room: 'Sprechzimmer', deviceCount: null, staffRole: 'Arzt', durationMin: 10, parallelWith: null, resourceGroupId: 'arzt-sprechzeit' },
@@ -48,7 +49,7 @@ export const defaultResourceGroups: ResourceGroup[] = [
   },
   {
     id: 'mfa-kapazitat',
-    name: 'MFA-Kapazität',
+    name: 'Blutentnahmen',
     examinationIds: ['e01'],
     slotsPerDay: 16,
     groupType: 'staff_multiplied',
@@ -100,11 +101,17 @@ export const defaultResourceConfig: ResourceConfig = {
     'langzeit-rr': { deviceCount: 4 },
   },
   scheduleConfig: {
-    // New patients start Mon, Tue, Wed → their 3-day journey fits within Mon–Fri
-    startDays: ['Mon', 'Tue', 'Wed'],
+    // New patients can start any weekday
+    startDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
     // Visits on consecutive days (Tag 1 = start, Tag 2 = start+1, Tag 3 = start+2)
     visitDayOffsets: [0, 1, 2],
     // Langzeit devices are attached on Tag 1 and returned the following calendar day
     lzAnlegenDay: 1,
+    // 100% of patients receive Langzeit measurements by default
+    lzPercent: 100,
+    // Maximum patient stay per visit day: 2 hours
+    maxStayMinutes: 120,
+    // No break between exams by default
+    breakBetweenExams: false,
   },
 };

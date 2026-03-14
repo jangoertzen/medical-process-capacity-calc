@@ -81,20 +81,67 @@ function getStaffCount(
 // Time per patient for a resource group × specific patient stage
 // ---------------------------------------------------------------------------
 
+/** True when exam belongs to a Langzeit device group and is an "anlegen" step */
+function isLzAnlegen(exam: Examination): boolean {
+  return (
+    (exam.resourceGroupId === 'langzeit-ekg' || exam.resourceGroupId === 'langzeit-rr') &&
+    exam.name.toLowerCase().includes('anlegen')
+  );
+}
+
+/** True when exam belongs to a Langzeit device group and is an "abnehmen" step */
+function isLzAbnehmen(exam: Examination): boolean {
+  return (
+    (exam.resourceGroupId === 'langzeit-ekg' || exam.resourceGroupId === 'langzeit-rr') &&
+    (exam.name.toLowerCase().includes('abnehmen') || exam.name.toLowerCase().includes('abnahme'))
+  );
+}
+
+/**
+ * Compute time demand per patient for a resource group on a specific visit stage.
+ *
+ * LZ anlegen exams are attributed to the effective lzAnlegenDay stage
+ * (not necessarily their static exam.day), and LZ abnehmen exams are
+ * excluded from visit stages (they happen on the device-return day).
+ */
 function timeForGroupAndStage(
   group: ResourceGroup,
   stage: DayNumber,
   examinations: Examination[],
   allSteps: Step[],
+  lzAnlegenDay: 1 | 2,
+  lzPercent: number = 100,
 ): number {
+  // Determine which exams in this group are active on this stage,
+  // accounting for LZ anlegen/abnehmen overrides.
   const stageExamIds = new Set(
-    examinations.filter(e => e.day === stage && group.examinationIds.includes(e.id)).map(e => e.id),
+    examinations.filter(e => {
+      if (!group.examinationIds.includes(e.id)) return false;
+
+      // LZ abnehmen never counts on any visit stage (happens on return day)
+      if (isLzAbnehmen(e)) return false;
+
+      // LZ anlegen counts only on the configured lzAnlegenDay stage
+      if (isLzAnlegen(e)) return stage === lzAnlegenDay;
+
+      // Normal exams: use their static day
+      return e.day === stage;
+    }).map(e => e.id),
   );
   if (stageExamIds.size === 0) return 0;
 
+  // Separate LZ and non-LZ steps, scale LZ time by lzPercent
+  const lzExamIds = new Set(
+    examinations.filter(e => isLzAnlegen(e) || isLzAbnehmen(e)).map(e => e.id),
+  );
+  const scale = lzPercent / 100;
+
   return allSteps
     .filter(s => s.resourceGroupId === group.id && s.examinationIds.some(id => stageExamIds.has(id)))
-    .reduce((sum, s) => sum + s.durationMin, 0);
+    .reduce((sum, s) => {
+      const isLzStep = s.examinationIds.some(id => lzExamIds.has(id));
+      return sum + s.durationMin * (isLzStep ? scale : 1);
+    }, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -102,12 +149,24 @@ function timeForGroupAndStage(
 // ---------------------------------------------------------------------------
 
 /**
- * Cohort start abs days: W1 cohorts (days 0–4) + W2 cohorts (days 5–9).
- * No W3 cohorts (ramp-down week — existing cohorts finish, no new ones start).
+ * Cohort start abs days, including enough historical weeks so that even
+ * the longest check-up program is fully represented in Week 2 (steady state).
+ *
+ * A check-up spanning visitDayOffsets[2] working days needs cohorts starting
+ * ceil(maxOffset/5) weeks before the target week to have their final stage
+ * land within Week 2. We also include W2 cohorts (days 5–9) whose later
+ * stages may extend into Week 3.
+ *
+ * No W3 cohorts are started (ramp-down week).
  */
-function getCohortStartAbsDays(startDays: Weekday[]): number[] {
+function getCohortStartAbsDays(
+  startDays: Weekday[],
+  maxOffset: number,
+): number[] {
+  const historyWeeks = Math.ceil(maxOffset / 5); // weeks of history before W1
   const result: number[] = [];
-  for (let w = 0; w < 2; w++) {
+  // week index: -historyWeeks … 1  (0 = W1, 1 = W2)
+  for (let w = -historyWeeks; w < 2; w++) {
     for (const sd of startDays) {
       result.push(w * 5 + WEEKDAY_ORDER.indexOf(sd));
     }
@@ -158,8 +217,10 @@ function computeDayResources(
   resourceGroups: ResourceGroup[],
   config: ResourceConfig,
   allSteps: Step[],
+  lzAnlegenDay: 1 | 2,
 ): ResourceCapacityResult[] {
   const { staff, groupOverrides } = config;
+  const lzPercent = config.scheduleConfig.lzPercent ?? 100;
   const resourceResults: ResourceCapacityResult[] = [];
 
   for (const group of resourceGroups) {
@@ -169,16 +230,16 @@ function computeDayResources(
     if (group.groupType === 'device_count') {
       if (!hasAnlegenStage) continue;
       const deviceCount = groupOverrides[group.id]?.deviceCount ?? group.slotsPerDay;
-      limitingCapacity = deviceCount;
+      if (lzPercent === 0) {
+        // No patients need devices — skip device constraint entirely
+        continue;
+      }
+      // Each device serves one patient; only lzPercent% of patients need one
+      limitingCapacity = Math.floor(deviceCount / (lzPercent / 100));
       timePerPatientMin = 0;
     } else {
-      const hasExamsThisDay = activeStages.some(stage =>
-        examinations.some(e => e.day === stage && group.examinationIds.includes(e.id)),
-      );
-      if (!hasExamsThisDay) continue;
-
       timePerPatientMin = activeStages.reduce(
-        (sum, stage) => sum + timeForGroupAndStage(group, stage, examinations, allSteps),
+        (sum, stage) => sum + timeForGroupAndStage(group, stage, examinations, allSteps, lzAnlegenDay, lzPercent),
         0,
       );
       if (timePerPatientMin === 0) continue;
@@ -221,7 +282,8 @@ export function calculateCapacity(
   const { scheduleConfig, openingHours } = config;
   const { startDays, visitDayOffsets, lzAnlegenDay } = scheduleConfig;
 
-  const cohortStartAbsDays = getCohortStartAbsDays(startDays);
+  const maxOffset = visitDayOffsets[2]; // largest visit offset
+  const cohortStartAbsDays = getCohortStartAbsDays(startDays, maxOffset);
 
   // --- Week 2 calculation (absDays 5–9) — the binding capacity constraint ---
   const weekdayResults: WeekdayCapacityResult[] = [];
@@ -237,7 +299,7 @@ export function calculateCapacity(
 
     const resourceResults = computeDayResources(
       weekday, activeStages, hasAnlegenStage, openingMinutes,
-      examinations, resourceGroups, config, allSteps,
+      examinations, resourceGroups, config, allSteps, lzAnlegenDay,
     );
     if (resourceResults.length === 0) continue;
 
@@ -288,7 +350,7 @@ export function calculateCapacity(
 
     const resourceResults = computeDayResources(
       weekday, activeStages, hasAnlegenStage, openingMinutes,
-      examinations, resourceGroups, config, allSteps,
+      examinations, resourceGroups, config, allSteps, lzAnlegenDay,
     );
 
     const maxPatientsThisDay =

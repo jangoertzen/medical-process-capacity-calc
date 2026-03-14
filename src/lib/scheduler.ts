@@ -146,9 +146,12 @@ export function buildWeekSchedule(
 ): WeekdaySchedule[] {
   const { startDays, visitDayOffsets, lzAnlegenDay } = config.scheduleConfig;
 
-  // Cohort start abs days: W1 (days 0–4) + W2 (days 5–9)
+  // Cohort start abs days: include enough historical weeks so that even
+  // the longest check-up has its final stage land within the display window.
+  const maxOffset = visitDayOffsets[2];
+  const historyWeeks = Math.ceil(maxOffset / 5);
   const cohortStartAbsDays: number[] = [];
-  for (let w = 0; w < 2; w++) {
+  for (let w = -historyWeeks; w < 2; w++) {
     for (const startDay of startDays) {
       cohortStartAbsDays.push(w * 5 + WEEKDAY_ORDER.indexOf(startDay));
     }
@@ -221,6 +224,9 @@ function scheduleDay(
   config: ResourceConfig,
   nPatients: number,
 ): ScheduledExam[] {
+  const lzPercent = config.scheduleConfig.lzPercent ?? 100;
+  const nLzPatients = Math.round(nPatients * lzPercent / 100);
+
   // Shared resource slots across all patient groups
   const resourceSlots = new Map<string, number[]>();
   for (const group of resourceGroups) {
@@ -228,8 +234,14 @@ function scheduleDay(
     resourceSlots.set(group.id, Array(Math.max(1, slotCount)).fill(0));
   }
 
-  // Build exam blocks per visit stage
-  const stageBlocks = new Map<DayNumber, ExamBlock[]>();
+  /** True if this block involves LZ anlegen or abnehmen exams */
+  function isLzBlock(block: ExamBlock): boolean {
+    return block.groupIds.some(gid => gid === 'langzeit-ekg' || gid === 'langzeit-rr');
+  }
+
+  // Build exam blocks per visit stage — separate LZ and non-LZ blocks
+  const stageBlocksAll = new Map<DayNumber, ExamBlock[]>();
+  const stageBlocksNoLz = new Map<DayNumber, ExamBlock[]>();
 
   for (const stage of activeStages) {
     let stageExams = examinations.filter(e => {
@@ -246,7 +258,9 @@ function scheduleDay(
       stageExams = [...stageExams, ...anlegen];
     }
 
-    stageBlocks.set(stage, buildExamBlocks(stageExams));
+    const allBlocks = buildExamBlocks(stageExams);
+    stageBlocksAll.set(stage, allBlocks);
+    stageBlocksNoLz.set(stage, allBlocks.filter(b => !isLzBlock(b)));
   }
 
   // Exam blocks for device return mini-visit
@@ -256,33 +270,15 @@ function scheduleDay(
 
   const result: ScheduledExam[] = [];
 
-  // Schedule visit patients (interleaved across stages)
-  for (let p = 0; p < nPatients; p++) {
-    for (const stage of activeStages) {
-      const patientId = `T${stage}-P${String(p + 1).padStart(2, '0')}`;
-      let patientFree = 0;
-      const blocks = stageBlocks.get(stage) ?? [];
-
-      for (const block of blocks) {
-        let start = patientFree;
-        for (const groupId of block.groupIds) {
-          const slots = resourceSlots.get(groupId);
-          if (slots && slots.length > 0) start = Math.max(start, Math.min(...slots));
-        }
-        const end = start + block.duration;
-        for (const groupId of block.groupIds) {
-          const slots = resourceSlots.get(groupId);
-          if (slots) lockSlot(slots, end);
-        }
-        patientFree = end;
-        result.push({ patientId, stage, items: block.items, startMin: start, endMin: end, primaryGroupId: block.primaryGroupId });
-      }
-    }
-  }
-
-  // Schedule device-return patients
+  // ---------------------------------------------------------------------------
+  // 1) Schedule device-return patients FIRST (only nLzPatients need to return).
+  //    Patients returning Langzeit devices come in first thing in the morning.
+  //    This frees devices before new ones are attached, so we never need more
+  //    devices than deviceCount (even when one cohort returns and another
+  //    attaches on the same day — the common case with consecutive startDays).
+  // ---------------------------------------------------------------------------
   if (hasDeviceReturn && returnBlocks.length > 0) {
-    for (let p = 0; p < nPatients; p++) {
+    for (let p = 0; p < nLzPatients; p++) {
       const patientId = `Return-P${String(p + 1).padStart(2, '0')}`;
       let patientFree = 0;
 
@@ -303,5 +299,101 @@ function scheduleDay(
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // 2) Schedule visit patients (interleaved across stages).
+  //    First nLzPatients get all blocks (incl. LZ anlegen); rest skip LZ blocks.
+  //    maxStayMinutes constrains the patient's total stay per visit day.
+  // ---------------------------------------------------------------------------
+  const maxStay = config.scheduleConfig.maxStayMinutes ?? 120;
+  const breakMin = (config.scheduleConfig.breakBetweenExams ?? false) ? 5 : 0;
+
+  for (let p = 0; p < nPatients; p++) {
+    const hasLz = p < nLzPatients;
+    for (const stage of activeStages) {
+      const patientId = `T${stage}-P${String(p + 1).padStart(2, '0')}`;
+      let patientFree = 0;
+      let patientArrival = -1;
+      let blockIdx = 0;
+      const blocks = hasLz
+        ? (stageBlocksAll.get(stage) ?? [])
+        : (stageBlocksNoLz.get(stage) ?? []);
+
+      for (const block of blocks) {
+        // Add break between exams (not before the first one)
+        if (breakMin > 0 && blockIdx > 0) patientFree += breakMin;
+
+        let start = patientFree;
+        for (const groupId of block.groupIds) {
+          const slots = resourceSlots.get(groupId);
+          if (slots && slots.length > 0) start = Math.max(start, Math.min(...slots));
+        }
+
+        // Enforce maxStay: if this block would exceed the patient's window,
+        // push the patient's arrival forward so the window covers this block.
+        if (patientArrival < 0) {
+          patientArrival = start;
+        } else if (start + block.duration > patientArrival + maxStay) {
+          const newArrival = start + block.duration - maxStay;
+          patientArrival = newArrival;
+        }
+
+        const end = start + block.duration;
+        for (const groupId of block.groupIds) {
+          const slots = resourceSlots.get(groupId);
+          if (slots) lockSlot(slots, end);
+        }
+        patientFree = end;
+        blockIdx++;
+        result.push({ patientId, stage, items: block.items, startMin: start, endMin: end, primaryGroupId: block.primaryGroupId });
+      }
+    }
+  }
+
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Schedule analysis — actual slot utilization & wait-time attribution
+// ---------------------------------------------------------------------------
+
+export interface DayAnalysis {
+  /** groupId → number of exam blocks completing within opening hours */
+  actualSlots: Record<string, number>;
+  /** groupId → total wait time (min) patients spend waiting for this resource */
+  waitMinByGroup: Record<string, number>;
+}
+
+export function analyzeScheduleDay(schedule: WeekdaySchedule): DayAnalysis {
+  const actualSlots: Record<string, number> = {};
+  const waitMinByGroup: Record<string, number> = {};
+
+  // 1. Count exam blocks that complete within opening hours
+  for (const exam of schedule.scheduledExams) {
+    if (exam.endMin <= schedule.openingMinutes) {
+      actualSlots[exam.primaryGroupId] = (actualSlots[exam.primaryGroupId] ?? 0) + 1;
+    }
+  }
+
+  // 2. Compute wait times: gap between consecutive exams for the same patient.
+  //    The wait is attributed to the NEXT exam's resource group (the patient
+  //    is waiting for THAT resource to become available).
+  const byPatient = new Map<string, ScheduledExam[]>();
+  for (const exam of schedule.scheduledExams) {
+    const list = byPatient.get(exam.patientId) ?? [];
+    list.push(exam);
+    byPatient.set(exam.patientId, list);
+  }
+
+  for (const [, exams] of byPatient) {
+    const sorted = [...exams].sort((a, b) => a.startMin - b.startMin);
+    for (let i = 1; i < sorted.length; i++) {
+      const gap = sorted[i].startMin - sorted[i - 1].endMin;
+      if (gap > 0) {
+        const groupId = sorted[i].primaryGroupId;
+        waitMinByGroup[groupId] = (waitMinByGroup[groupId] ?? 0) + gap;
+      }
+    }
+  }
+
+  return { actualSlots, waitMinByGroup };
 }

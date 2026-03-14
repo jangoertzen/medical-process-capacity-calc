@@ -1,8 +1,10 @@
+import { useMemo } from 'react'
 import { useAppStore } from '@/store/appStore'
 import { KPICard } from '@/components/dashboard/KPICard'
 import { BottleneckAlert } from '@/components/dashboard/BottleneckAlert'
 import { WeeklyCalendar } from '@/components/dashboard/WeeklyCalendar'
 import { DayScheduleGantt } from '@/components/charts/DayScheduleGantt'
+import { buildWeekSchedule, analyzeScheduleDay } from '@/lib/scheduler'
 import type { Weekday } from '@/types'
 
 const WEEKDAYS: Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
@@ -12,6 +14,37 @@ export default function Dashboard() {
   const results = useAppStore(s => s.getResults())
   const activeScenario = useAppStore(s => s.getActiveScenario())
   const updateScheduleConfig = useAppStore(s => s.updateScheduleConfig)
+
+  const nPatients = Math.max(1, results?.maxPatientsPerCohort ?? 1)
+
+  // Run scheduler & analyze for actual slot counts and wait times
+  const scheduleAnalysis = useMemo(() => {
+    if (!activeScenario || !results) return null
+    const allSchedules = buildWeekSchedule(
+      activeScenario.examinations, activeScenario.resourceGroups,
+      activeScenario.resourceConfig, nPatients,
+    )
+    // Per absDay analyses
+    const byAbsDay = new Map<number, ReturnType<typeof analyzeScheduleDay>>()
+    for (const s of allSchedules) byAbsDay.set(s.absDay, analyzeScheduleDay(s))
+
+    // Aggregate wait times across Week 2
+    const waitTotals: Record<string, number> = {}
+    for (const s of allSchedules.filter(s => s.week === 2)) {
+      const a = byAbsDay.get(s.absDay)
+      if (!a) continue
+      for (const [gid, wt] of Object.entries(a.waitMinByGroup)) {
+        waitTotals[gid] = (waitTotals[gid] ?? 0) + wt
+      }
+    }
+    const sorted = Object.entries(waitTotals).sort((a, b) => b[1] - a[1])
+    const worstWait = sorted[0]
+    const worstWaitGroup = worstWait
+      ? activeScenario.resourceGroups.find(g => g.id === worstWait[0])
+      : null
+
+    return { byAbsDay, worstWaitGroupName: worstWaitGroup?.name ?? '—', worstWaitMin: worstWait?.[1] ?? 0 }
+  }, [activeScenario, results, nPatients])
 
   if (!results || !activeScenario) return <div>Keine Daten</div>
 
@@ -80,6 +113,12 @@ export default function Dashboard() {
           value={results.startDaysCount}
           subtitle={schedule.startDays.join(', ')}
           color="gray"
+        />
+        <KPICard
+          title="Wartezeitverursacher"
+          value={scheduleAnalysis?.worstWaitGroupName ?? '—'}
+          subtitle={scheduleAnalysis ? `${scheduleAnalysis.worstWaitMin} min Gesamtwartezeit (W2)` : ''}
+          color="orange"
         />
       </div>
 
@@ -153,6 +192,56 @@ export default function Dashboard() {
               Gerät wird jeweils am Folgetag (nächster Kalendertag) zurückgegeben.
             </div>
           </div>
+
+          <div>
+            <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.4rem', fontWeight: 500 }}>
+              Langzeit-Anteil
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input type="range" min={0} max={100} step={5}
+                value={schedule.lzPercent ?? 100}
+                onChange={e => updateScheduleConfig({ lzPercent: Number(e.target.value) })}
+                style={{ width: '120px', accentColor: '#3b82f6' }} />
+              <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{schedule.lzPercent ?? 100}%</span>
+            </div>
+            <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.3rem' }}>
+              Anteil der Patienten mit Langzeit-EKG/-RR.
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.4rem', fontWeight: 500 }}>
+              Max. Aufenthalt/Tag
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input type="range" min={30} max={480} step={15}
+                value={schedule.maxStayMinutes ?? 120}
+                onChange={e => updateScheduleConfig({ maxStayMinutes: Number(e.target.value) })}
+                style={{ width: '120px', accentColor: '#3b82f6' }} />
+              <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>
+                {Math.floor((schedule.maxStayMinutes ?? 120) / 60)}:{String((schedule.maxStayMinutes ?? 120) % 60).padStart(2, '0')} h
+              </span>
+            </div>
+            <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.3rem' }}>
+              Maximale Verweildauer eines Patienten pro Besuchstag.
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.4rem', fontWeight: 500 }}>
+              Pause zwischen Untersuchungen
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+              <input type="checkbox"
+                checked={schedule.breakBetweenExams ?? false}
+                onChange={e => updateScheduleConfig({ breakBetweenExams: e.target.checked })}
+                style={{ width: '18px', height: '18px', accentColor: '#3b82f6' }} />
+              <span style={{ fontSize: '0.82rem', color: '#374151' }}>5 min Pause</span>
+            </label>
+            <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.3rem' }}>
+              Fügt 5 Minuten Pause zwischen jeder Untersuchung ein.
+            </div>
+          </div>
         </div>
       </div>
 
@@ -161,7 +250,7 @@ export default function Dashboard() {
         <div style={{ fontWeight: 600, marginBottom: '1rem', color: '#1e293b' }}>
           Kapazitätsübersicht — Ressourcen × Kohortenüberlappung
         </div>
-        <WeeklyCalendar results={results} />
+        <WeeklyCalendar results={results} actualSlotsByDay={scheduleAnalysis?.byAbsDay} />
       </div>
 
       {/* Time-based schedule */}

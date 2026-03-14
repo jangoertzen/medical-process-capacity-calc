@@ -24,7 +24,7 @@ defaultData.ts  →  appStore.ts  →  calculator.ts  →  UI components
 (typed defaults)   (Zustand/immer)   (pure fn)        (pages + components)
 ```
 
-State lives entirely in **`src/store/appStore.ts`** (Zustand + immer + persist to `localStorage` key `process-calc-v4`). Every mutation calls `calculateCapacity()` immediately and stores results in `scenario.results`. The store is never read directly from components — always via `useAppStore(selector)`.
+State lives entirely in **`src/store/appStore.ts`** (Zustand + immer + persist to `localStorage` key `process-calc-v6`). Every mutation calls `calculateCapacity()` immediately and stores results in `scenario.results`. The store is never read directly from components — always via `useAppStore(selector)`.
 
 ### Core Calculation Model (`src/lib/calculator.ts`)
 
@@ -44,7 +44,7 @@ Key concepts:
 All interfaces are in one file. Key ones:
 - `Examination`: one row in the exam table — `day` (1/2/3), `parallelWith` (exam name), `resourceGroupId`
 - `ResourceGroup`: groups exams for capacity calculation — `groupType` determines the formula
-- `ScheduleConfig`: `startDays` + `stageOrder`
+- `ScheduleConfig`: `startDays` + `visitDayOffsets` + `lzAnlegenDay`
 - `WeeklyCapacityResult` → `WeekdayCapacityResult[]` → `ResourceCapacityResult[]`
 
 ### Routing & Pages (`src/App.tsx`)
@@ -57,7 +57,7 @@ Hash-based navigation via react-router-dom. Pages: `dashboard`, `untersuchungen`
 
 ### State Persistence
 
-localStorage key is **`process-calc-v4`**. Bump the version key in `appStore.ts` when making breaking changes to the persisted state shape (`scenarios`, `activeScenarioId`, `compareScenarioIds`).
+localStorage key is **`process-calc-v6`**. Bump the version key in `appStore.ts` when making breaking changes to the persisted state shape (`scenarios`, `activeScenarioId`, `compareScenarioIds`).
 
 ### Path Alias
 

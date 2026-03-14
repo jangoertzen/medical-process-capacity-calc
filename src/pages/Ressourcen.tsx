@@ -148,6 +148,44 @@ export default function Ressourcen() {
               Gerät wird jeweils am Folgetag (nächster Kalendertag) zurückgegeben.
             </div>
           </div>
+          <div>
+            <label style={labelS}>Langzeit-Anteil (% der Patienten)</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.25rem' }}>
+              <input type="range" min={0} max={100} step={5}
+                value={scheduleConfig.lzPercent ?? 100}
+                onChange={e => updateScheduleConfig({ lzPercent: Number(e.target.value) })}
+                style={{ width: '160px', accentColor: '#3b82f6' }} />
+              <span style={{ fontWeight: 700, fontSize: '0.9rem', minWidth: '40px' }}>{scheduleConfig.lzPercent ?? 100}%</span>
+            </div>
+            <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.3rem' }}>
+              Anteil der Patienten, die Langzeit-EKG und Langzeit-RR erhalten.
+            </div>
+          </div>
+          <div>
+            <label style={labelS}>Max. Aufenthalt pro Besuchstag</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.25rem' }}>
+              <input type="range" min={30} max={480} step={15}
+                value={scheduleConfig.maxStayMinutes ?? 120}
+                onChange={e => updateScheduleConfig({ maxStayMinutes: Number(e.target.value) })}
+                style={{ width: '160px', accentColor: '#3b82f6' }} />
+              <span style={{ fontWeight: 700, fontSize: '0.9rem', minWidth: '50px' }}>
+                {Math.floor((scheduleConfig.maxStayMinutes ?? 120) / 60)}:{String((scheduleConfig.maxStayMinutes ?? 120) % 60).padStart(2, '0')} h
+              </span>
+            </div>
+            <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.3rem' }}>
+              Maximale Verweildauer eines Patienten pro Besuchstag (Standard: 2:00 h).
+            </div>
+          </div>
+          <div>
+            <label style={labelS}>Pause zwischen Untersuchungen</label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.25rem', cursor: 'pointer' }}>
+              <input type="checkbox"
+                checked={scheduleConfig.breakBetweenExams ?? false}
+                onChange={e => updateScheduleConfig({ breakBetweenExams: e.target.checked })}
+                style={{ width: '18px', height: '18px', accentColor: '#3b82f6' }} />
+              <span style={{ fontSize: '0.85rem', color: '#1e293b' }}>5 Minuten Pause zwischen jeder Untersuchung</span>
+            </label>
+          </div>
         </div>
       </Card>
     </div>
