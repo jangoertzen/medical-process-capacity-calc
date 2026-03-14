@@ -15,6 +15,8 @@ export interface Examination {
   parallelWith: string | null;
   resourceGroupId: string;
   isAssumedDefault?: boolean;
+  /** Revenue per examination in EUR */
+  revenueEur: number;
 }
 
 export interface ResourceGroup {

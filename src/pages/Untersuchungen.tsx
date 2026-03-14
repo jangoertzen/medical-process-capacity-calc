@@ -46,6 +46,7 @@ export default function Untersuchungen() {
               <th style={thS}>Rolle</th>
               <th style={thS}>Dauer (min)</th>
               <th style={thS}>Parallel mit</th>
+              <th style={thS}>Umsatz (€)</th>
               <th style={thS}>Ressourcengruppe</th>
             </tr>
           </thead>
@@ -86,6 +87,15 @@ export default function Untersuchungen() {
                       .map(n => <option key={n} value={n}>{n}</option>)
                     }
                   </select>
+                </td>
+                <td style={tdS}>
+                  <input type="number" min={0} max={9999} value={exam.revenueEur}
+                    className="no-spin"
+                    onChange={e => {
+                      const v = parseInt(e.target.value, 10)
+                      if (!isNaN(v) && v >= 0) updateExamination(exam.id, { revenueEur: v })
+                    }}
+                    style={{ width: '64px', padding: '0.2rem 0.35rem', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '0.85rem', color: '#1e293b', textAlign: 'right' }} />
                 </td>
                 <td style={tdS}><span style={{ fontSize: '0.8rem', color: '#64748b' }}>{exam.resourceGroupId}</span></td>
               </tr>

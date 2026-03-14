@@ -43,8 +43,27 @@ export default function Dashboard() {
       ? activeScenario.resourceGroups.find(g => g.id === worstWait[0])
       : null
 
-    return { byAbsDay, worstWaitGroupName: worstWaitGroup?.name ?? '—', worstWaitMin: worstWait?.[1] ?? 0 }
+    // Average wait per patient: total wait across W2 / (nPatients × W2 days)
+    const w2Days = allSchedules.filter(s => s.week === 2).length
+    const avgWaitPerPatient = (worstWait && w2Days > 0 && nPatients > 0)
+      ? Math.round(worstWait[1] / (nPatients * w2Days) * 10) / 10
+      : 0
+
+    return { byAbsDay, worstWaitGroupName: worstWaitGroup?.name ?? '—', worstWaitMin: worstWait?.[1] ?? 0, avgWaitPerPatient }
   }, [activeScenario, results, nPatients])
+
+  // Revenue calculation: sum per-patient revenue, account for lzPercent on LZ exams
+  const revenuePerPatient = useMemo(() => {
+    if (!activeScenario) return 0
+    const lzPct = (activeScenario.resourceConfig.scheduleConfig.lzPercent ?? 100) / 100
+    const lzGroupIds = new Set(['langzeit-ekg', 'langzeit-rr'])
+    return activeScenario.examinations.reduce((sum, exam) => {
+      const factor = lzGroupIds.has(exam.resourceGroupId) ? lzPct : 1
+      return sum + exam.revenueEur * factor
+    }, 0)
+  }, [activeScenario])
+
+  const monthlyRevenue = Math.round(revenuePerPatient * (results?.weeklyThroughput ?? 0) * 4)
 
   if (!results || !activeScenario) return <div>Keine Daten</div>
 
@@ -109,15 +128,15 @@ export default function Dashboard() {
           color="orange"
         />
         <KPICard
-          title="Kohortenstart-Tage"
-          value={results.startDaysCount}
-          subtitle={schedule.startDays.join(', ')}
-          color="gray"
+          title="Monatsumsatz (extrapol.)"
+          value={`${monthlyRevenue.toLocaleString('de-DE')} €`}
+          subtitle={`${revenuePerPatient.toLocaleString('de-DE')} € / Pat. × ${results.weeklyThroughput} / Woche × 4`}
+          color="green"
         />
         <KPICard
           title="Wartezeitverursacher"
           value={scheduleAnalysis?.worstWaitGroupName ?? '—'}
-          subtitle={scheduleAnalysis ? `${scheduleAnalysis.worstWaitMin} min Gesamtwartezeit (W2)` : ''}
+          subtitle={scheduleAnalysis ? `Ø ${scheduleAnalysis.avgWaitPerPatient} min / Patient (W2)` : ''}
           color="orange"
         />
       </div>

@@ -303,6 +303,11 @@ function scheduleDay(
   // 2) Schedule visit patients (interleaved across stages).
   //    First nLzPatients get all blocks (incl. LZ anlegen); rest skip LZ blocks.
   //    maxStayMinutes constrains the patient's total stay per visit day.
+  //
+  //    Optimization: blocks whose resource groups are NOT shared with any other
+  //    block on the same stage ("flexible" blocks, e.g. Blutabnahme in its own
+  //    Lab room with a dedicated MFA) are deferred and inserted into wait gaps
+  //    between main-sequence blocks to minimize patient idle time.
   // ---------------------------------------------------------------------------
   const maxStay = config.scheduleConfig.maxStayMinutes ?? 120;
   const breakMin = (config.scheduleConfig.breakBetweenExams ?? false) ? 5 : 0;
@@ -311,32 +316,38 @@ function scheduleDay(
     const hasLz = p < nLzPatients;
     for (const stage of activeStages) {
       const patientId = `T${stage}-P${String(p + 1).padStart(2, '0')}`;
-      let patientFree = 0;
-      let patientArrival = -1;
-      let blockIdx = 0;
       const blocks = hasLz
         ? (stageBlocksAll.get(stage) ?? [])
         : (stageBlocksNoLz.get(stage) ?? []);
 
+      // Separate blocks into main sequence and flexible (gap-fillable).
+      // A block is flexible if NONE of its groupIds are used by any other block
+      // on this stage — it uses a completely independent resource.
+      const mainBlocks: ExamBlock[] = [];
+      const flexBlocks: ExamBlock[] = [];
       for (const block of blocks) {
-        // Add break between exams (not before the first one)
-        if (breakMin > 0 && blockIdx > 0) patientFree += breakMin;
-
-        let start = patientFree;
-        for (const groupId of block.groupIds) {
-          const slots = resourceSlots.get(groupId);
-          if (slots && slots.length > 0) start = Math.max(start, Math.min(...slots));
+        const isIndependent = block.groupIds.every(gid =>
+          !blocks.some(other => other !== block && other.groupIds.includes(gid)),
+        );
+        if (isIndependent) {
+          flexBlocks.push(block);
+        } else {
+          mainBlocks.push(block);
         }
+      }
 
-        // Enforce maxStay: if this block would exceed the patient's window,
-        // push the patient's arrival forward so the window covers this block.
+      let patientFree = 0;
+      let patientArrival = -1;
+      let blockIdx = 0;
+      const pendingFlex = [...flexBlocks];
+
+      /** Schedule a single block: lock resources, emit result, advance patientFree */
+      const scheduleBlock = (block: ExamBlock, start: number) => {
         if (patientArrival < 0) {
           patientArrival = start;
         } else if (start + block.duration > patientArrival + maxStay) {
-          const newArrival = start + block.duration - maxStay;
-          patientArrival = newArrival;
+          patientArrival = start + block.duration - maxStay;
         }
-
         const end = start + block.duration;
         for (const groupId of block.groupIds) {
           const slots = resourceSlots.get(groupId);
@@ -345,6 +356,53 @@ function scheduleDay(
         patientFree = end;
         blockIdx++;
         result.push({ patientId, stage, items: block.items, startMin: start, endMin: end, primaryGroupId: block.primaryGroupId });
+      };
+
+      /** Earliest time a block can start given patient availability and resource slots */
+      const earliestStart = (block: ExamBlock, earliest: number) => {
+        let start = earliest;
+        for (const groupId of block.groupIds) {
+          const slots = resourceSlots.get(groupId);
+          if (slots && slots.length > 0) start = Math.max(start, Math.min(...slots));
+        }
+        return start;
+      };
+
+      for (const block of mainBlocks) {
+        if (breakMin > 0 && blockIdx > 0) patientFree += breakMin;
+
+        const mainStart = earliestStart(block, patientFree);
+
+        // Try to fill the wait gap [patientFree, mainStart) with flexible blocks
+        if (mainStart > patientFree && pendingFlex.length > 0) {
+          for (let f = 0; f < pendingFlex.length; f++) {
+            const flex = pendingFlex[f];
+            const flexAfterBreak = (breakMin > 0 && blockIdx > 0) ? patientFree : patientFree;
+            const flexStart = earliestStart(flex, flexAfterBreak);
+            const flexEnd = flexStart + flex.duration;
+            // Flexible block fits in the gap if it finishes before main block starts
+            // (with room for a break before the main block if needed)
+            const needed = flexEnd + (breakMin > 0 ? breakMin : 0);
+            if (flexStart < mainStart && needed <= mainStart) {
+              scheduleBlock(flex, flexStart);
+              pendingFlex.splice(f, 1);
+              f--;
+              // After scheduling flex, recalculate patientFree for next flex
+              if (breakMin > 0) patientFree += breakMin;
+            }
+          }
+        }
+
+        // Schedule the main block (recalculate start — patientFree may have advanced)
+        const finalStart = earliestStart(block, patientFree);
+        scheduleBlock(block, finalStart);
+      }
+
+      // Schedule remaining flexible blocks at the end
+      for (const flex of pendingFlex) {
+        if (breakMin > 0 && blockIdx > 0) patientFree += breakMin;
+        const start = earliestStart(flex, patientFree);
+        scheduleBlock(flex, start);
       }
     }
   }

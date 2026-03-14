@@ -64,6 +64,7 @@ export function mapRowsToExaminations(
       parallelWith,
       resourceGroupId,
       isAssumedDefault: false,
+      revenueEur: 0,
     });
   });
 
