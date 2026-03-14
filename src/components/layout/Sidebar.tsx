@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, ClipboardList, Settings, GitBranch, BarChart3, Upload } from 'lucide-react'
+import { LayoutDashboard, ClipboardList, Settings, GitBranch, BarChart3 } from 'lucide-react'
 
 const navItems = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -7,7 +7,6 @@ const navItems = [
   { path: '/ressourcen', label: 'Ressourcen', icon: Settings },
   { path: '/szenarien', label: 'Szenarien', icon: GitBranch },
   { path: '/diagramme', label: 'Diagramme', icon: BarChart3 },
-  { path: '/import', label: 'Import', icon: Upload },
 ]
 
 export function Sidebar() {

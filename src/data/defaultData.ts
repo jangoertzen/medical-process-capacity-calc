@@ -109,6 +109,8 @@ export const defaultResourceConfig: ResourceConfig = {
     lzAnlegenDay: 1,
     // 100% of patients receive Langzeit measurements by default
     lzPercent: 100,
+    // 100% of patients receive Ergometrie by default
+    ergoPercent: 100,
     // Maximum patient stay per visit day: 2 hours
     maxStayMinutes: 120,
     // No break between exams by default

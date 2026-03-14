@@ -10,6 +10,7 @@ import type {
   DayNumber,
   Weekday,
 } from '@/types';
+import { buildWeekSchedule } from './scheduler';
 
 const WEEKDAY_ORDER: Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 
@@ -102,7 +103,7 @@ function isLzAbnehmen(exam: Examination): boolean {
  *
  * LZ anlegen exams are attributed to the effective lzAnlegenDay stage
  * (not necessarily their static exam.day), and LZ abnehmen exams are
- * excluded from visit stages (they happen on the device-return day).
+ * excluded entirely (no device return scheduling).
  */
 function timeForGroupAndStage(
   group: ResourceGroup,
@@ -111,14 +112,13 @@ function timeForGroupAndStage(
   allSteps: Step[],
   lzAnlegenDay: 1 | 2,
   lzPercent: number = 100,
+  ergoPercent: number = 100,
 ): number {
-  // Determine which exams in this group are active on this stage,
-  // accounting for LZ anlegen/abnehmen overrides.
   const stageExamIds = new Set(
     examinations.filter(e => {
       if (!group.examinationIds.includes(e.id)) return false;
 
-      // LZ abnehmen never counts on any visit stage (happens on return day)
+      // LZ abnehmen is excluded (no device return)
       if (isLzAbnehmen(e)) return false;
 
       // LZ anlegen counts only on the configured lzAnlegenDay stage
@@ -130,17 +130,23 @@ function timeForGroupAndStage(
   );
   if (stageExamIds.size === 0) return 0;
 
-  // Separate LZ and non-LZ steps, scale LZ time by lzPercent
+  // Identify LZ and Ergometrie exams for percentage scaling
   const lzExamIds = new Set(
     examinations.filter(e => isLzAnlegen(e) || isLzAbnehmen(e)).map(e => e.id),
   );
-  const scale = lzPercent / 100;
+  const ergoExamIds = new Set(
+    examinations.filter(e => e.resourceGroupId === 'ergometrie').map(e => e.id),
+  );
+  const lzScale = lzPercent / 100;
+  const ergoScale = ergoPercent / 100;
 
   return allSteps
     .filter(s => s.resourceGroupId === group.id && s.examinationIds.some(id => stageExamIds.has(id)))
     .reduce((sum, s) => {
       const isLzStep = s.examinationIds.some(id => lzExamIds.has(id));
-      return sum + s.durationMin * (isLzStep ? scale : 1);
+      const isErgoStep = s.examinationIds.some(id => ergoExamIds.has(id));
+      const scale = isLzStep ? lzScale : isErgoStep ? ergoScale : 1;
+      return sum + s.durationMin * scale;
     }, 0);
 }
 
@@ -148,24 +154,12 @@ function timeForGroupAndStage(
 // Abs-day helpers (3-week model)
 // ---------------------------------------------------------------------------
 
-/**
- * Cohort start abs days, including enough historical weeks so that even
- * the longest check-up program is fully represented in Week 2 (steady state).
- *
- * A check-up spanning visitDayOffsets[2] working days needs cohorts starting
- * ceil(maxOffset/5) weeks before the target week to have their final stage
- * land within Week 2. We also include W2 cohorts (days 5–9) whose later
- * stages may extend into Week 3.
- *
- * No W3 cohorts are started (ramp-down week).
- */
 function getCohortStartAbsDays(
   startDays: Weekday[],
   maxOffset: number,
 ): number[] {
-  const historyWeeks = Math.ceil(maxOffset / 5); // weeks of history before W1
+  const historyWeeks = Math.ceil(maxOffset / 5);
   const result: number[] = [];
-  // week index: -historyWeeks … 1  (0 = W1, 1 = W2)
   for (let w = -historyWeeks; w < 2; w++) {
     for (const sd of startDays) {
       result.push(w * 5 + WEEKDAY_ORDER.indexOf(sd));
@@ -193,17 +187,6 @@ function activeStagesOnAbsDay(
   return stages;
 }
 
-function hasDeviceReturnOnAbsDay(
-  absDay: number,
-  cohortStartAbsDays: number[],
-  visitDayOffsets: [0, number, number],
-  lzAnlegenDay: 1 | 2,
-): boolean {
-  const lzAnlegenOffset = visitDayOffsets[lzAnlegenDay - 1];
-  const lzReturnOffset = lzAnlegenOffset + 1;
-  return cohortStartAbsDays.some(S => absDay - S === lzReturnOffset);
-}
-
 // ---------------------------------------------------------------------------
 // Per-day resource capacity computation
 // ---------------------------------------------------------------------------
@@ -221,6 +204,7 @@ function computeDayResources(
 ): ResourceCapacityResult[] {
   const { staff, groupOverrides } = config;
   const lzPercent = config.scheduleConfig.lzPercent ?? 100;
+  const ergoPercent = config.scheduleConfig.ergoPercent ?? 100;
   const resourceResults: ResourceCapacityResult[] = [];
 
   for (const group of resourceGroups) {
@@ -231,15 +215,13 @@ function computeDayResources(
       if (!hasAnlegenStage) continue;
       const deviceCount = groupOverrides[group.id]?.deviceCount ?? group.slotsPerDay;
       if (lzPercent === 0) {
-        // No patients need devices — skip device constraint entirely
         continue;
       }
-      // Each device serves one patient; only lzPercent% of patients need one
       limitingCapacity = Math.floor(deviceCount / (lzPercent / 100));
       timePerPatientMin = 0;
     } else {
       timePerPatientMin = activeStages.reduce(
-        (sum, stage) => sum + timeForGroupAndStage(group, stage, examinations, allSteps, lzAnlegenDay, lzPercent),
+        (sum, stage) => sum + timeForGroupAndStage(group, stage, examinations, allSteps, lzAnlegenDay, lzPercent, ergoPercent),
         0,
       );
       if (timePerPatientMin === 0) continue;
@@ -273,19 +255,23 @@ function computeDayResources(
 // Main calculation
 // ---------------------------------------------------------------------------
 
-export function calculateCapacity(
+/**
+ * Compute analytical capacity for a specific (visitDayOffsets, lzAnlegenDay) combo.
+ * Returns the weekday results and globalMaxN without post-processing.
+ */
+function computeAnalyticalCapacity(
   examinations: Examination[],
   resourceGroups: ResourceGroup[],
   config: ResourceConfig,
-): WeeklyCapacityResult {
-  const allSteps = resolveSteps(examinations);
-  const { scheduleConfig, openingHours } = config;
-  const { startDays, visitDayOffsets, lzAnlegenDay } = scheduleConfig;
-
-  const maxOffset = visitDayOffsets[2]; // largest visit offset
+  allSteps: Step[],
+  visitDayOffsets: [0, number, number],
+  lzAnlegenDay: 1 | 2,
+): { weekdayResults: WeekdayCapacityResult[]; globalMaxN: number } {
+  const { openingHours, scheduleConfig } = config;
+  const { startDays } = scheduleConfig;
+  const maxOffset = visitDayOffsets[2];
   const cohortStartAbsDays = getCohortStartAbsDays(startDays, maxOffset);
 
-  // --- Week 2 calculation (absDays 5–9) — the binding capacity constraint ---
   const weekdayResults: WeekdayCapacityResult[] = [];
 
   for (let absDay = 5; absDay <= 9; absDay++) {
@@ -316,13 +302,90 @@ export function calculateCapacity(
     });
   }
 
-  // Global max N from Week 2
   const globalMaxN =
     weekdayResults.length > 0
       ? Math.min(...weekdayResults.map(d => d.maxPatientsPerCohort))
       : 0;
 
-  // Post-process Week 2 results with global N
+  return { weekdayResults, globalMaxN };
+}
+
+/**
+ * Check whether a given nPatients fits within opening hours using the scheduler.
+ */
+function scheduleFitsOpeningHours(
+  examinations: Examination[],
+  resourceGroups: ResourceGroup[],
+  config: ResourceConfig,
+  nPatients: number,
+  visitDayOffsets: [0, number, number],
+  lzAnlegenDay: 1 | 2,
+): boolean {
+  const overriddenConfig: ResourceConfig = {
+    ...config,
+    scheduleConfig: { ...config.scheduleConfig, visitDayOffsets, lzAnlegenDay },
+  };
+  const schedules = buildWeekSchedule(examinations, resourceGroups, overriddenConfig, nPatients);
+  for (const s of schedules) {
+    if (s.week !== 2) continue;
+    for (const exam of s.scheduledExams) {
+      if (exam.endMin > s.openingMinutes) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Generate all valid visitDayOffset combinations.
+ * Tag 2: offset 1–5, Tag 3: offset tag2+1 to tag2+5.
+ */
+function allVisitDayOffsets(): [0, number, number][] {
+  const combos: [0, number, number][] = [];
+  for (let t2 = 1; t2 <= 5; t2++) {
+    for (let t3 = t2 + 1; t3 <= t2 + 5; t3++) {
+      combos.push([0, t2, t3]);
+    }
+  }
+  return combos;
+}
+
+export function calculateCapacity(
+  examinations: Examination[],
+  resourceGroups: ResourceGroup[],
+  config: ResourceConfig,
+): WeeklyCapacityResult {
+  const allSteps = resolveSteps(examinations);
+  const { scheduleConfig, openingHours } = config;
+  const { startDays } = scheduleConfig;
+
+  // --- Auto-determine best (visitDayOffsets, lzAnlegenDay) combination ---
+  let bestN = 0;
+  let bestLzDay: 1 | 2 = 1;
+  let bestOffsets: [0, number, number] = [0, 1, 2];
+  let bestResult: { weekdayResults: WeekdayCapacityResult[]; globalMaxN: number } | null = null;
+
+  for (const offsets of allVisitDayOffsets()) {
+    for (const lzDay of [1, 2] as const) {
+      const result = computeAnalyticalCapacity(examinations, resourceGroups, config, allSteps, offsets, lzDay);
+      if (result.globalMaxN > bestN) {
+        bestN = result.globalMaxN;
+        bestLzDay = lzDay;
+        bestOffsets = offsets;
+        bestResult = result;
+      }
+    }
+  }
+
+  const bestLzAnlegenDay = bestLzDay;
+  const bestVisitDayOffsets = bestOffsets;
+  let { weekdayResults, globalMaxN } = bestResult ?? { weekdayResults: [], globalMaxN: 0 };
+
+  // --- Validate capacity with scheduler (respects maxStayMinutes) ---
+  while (globalMaxN > 1 && !scheduleFitsOpeningHours(examinations, resourceGroups, config, globalMaxN, bestVisitDayOffsets, bestLzAnlegenDay)) {
+    globalMaxN--;
+  }
+
+  // Post-process Week 2 results with validated global N
   for (const wd of weekdayResults) {
     wd.maxPatientsPerCohort = globalMaxN;
     for (const r of wd.resourceResults) {
@@ -335,22 +398,23 @@ export function calculateCapacity(
   }
 
   // --- Three-week data (absDays 0–14) ---
+  const maxOffset = bestVisitDayOffsets[2];
+  const cohortStartAbsDays = getCohortStartAbsDays(startDays, maxOffset);
   const threeWeekData: DayCapacityResult[] = [];
 
   for (let absDay = 0; absDay <= 14; absDay++) {
     const weekday = WEEKDAY_ORDER[absDay % 5];
     const week = (Math.floor(absDay / 5) + 1) as 1 | 2 | 3;
     const openingMinutes = openingHours[weekday];
-    const activeStages = activeStagesOnAbsDay(absDay, cohortStartAbsDays, visitDayOffsets);
-    const hasDeviceReturn = hasDeviceReturnOnAbsDay(absDay, cohortStartAbsDays, visitDayOffsets, lzAnlegenDay);
+    const activeStages = activeStagesOnAbsDay(absDay, cohortStartAbsDays, bestVisitDayOffsets);
 
-    if (activeStages.length === 0 && !hasDeviceReturn) continue;
+    if (activeStages.length === 0) continue;
 
-    const hasAnlegenStage = activeStages.includes(lzAnlegenDay as DayNumber);
+    const hasAnlegenStage = activeStages.includes(bestLzAnlegenDay as DayNumber);
 
     const resourceResults = computeDayResources(
       weekday, activeStages, hasAnlegenStage, openingMinutes,
-      examinations, resourceGroups, config, allSteps, lzAnlegenDay,
+      examinations, resourceGroups, config, allSteps, bestLzAnlegenDay,
     );
 
     const maxPatientsThisDay =
@@ -367,7 +431,6 @@ export function calculateCapacity(
       week,
       weekday,
       activeStages,
-      hasDeviceReturn,
       openingMinutes,
       resourceResults,
       maxPatientsThisDay,
@@ -399,5 +462,33 @@ export function calculateCapacity(
     primaryBottleneck,
     allResourceUtilization,
     threeWeekData,
+    bestLzAnlegenDay,
+    bestVisitDayOffsets,
   };
+}
+
+/**
+ * Quickly compute weekly throughput for a given config.
+ * Runs the same grid search over all (visitDayOffsets, lzAnlegenDay) combos
+ * as calculateCapacity, but skips the expensive scheduler validation.
+ * Used for sensitivity analysis where many configs are compared.
+ */
+export function computeQuickThroughput(
+  examinations: Examination[],
+  resourceGroups: ResourceGroup[],
+  config: ResourceConfig,
+): number {
+  const allSteps = resolveSteps(examinations);
+  let bestN = 0;
+
+  for (const offsets of allVisitDayOffsets()) {
+    for (const lzDay of [1, 2] as const) {
+      const { globalMaxN } = computeAnalyticalCapacity(
+        examinations, resourceGroups, config, allSteps, offsets, lzDay,
+      );
+      if (globalMaxN > bestN) bestN = globalMaxN;
+    }
+  }
+
+  return bestN * config.scheduleConfig.startDays.length;
 }

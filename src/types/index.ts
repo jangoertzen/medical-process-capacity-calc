@@ -2,7 +2,7 @@ export type DayNumber = 1 | 2 | 3;
 export type Weekday = 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri';
 export type OpeningHours = Record<Weekday, number>;
 export type ResourceGroupType = 'time_based' | 'device_count' | 'staff_multiplied';
-export type AppPage = 'dashboard' | 'untersuchungen' | 'ressourcen' | 'szenarien' | 'diagramme' | 'import';
+export type AppPage = 'dashboard' | 'untersuchungen' | 'ressourcen' | 'szenarien' | 'diagramme';
 
 export interface Examination {
   id: string;
@@ -56,6 +56,8 @@ export interface ScheduleConfig {
   lzAnlegenDay: 1 | 2;
   /** Percentage of patients (0–100) who receive Langzeit-EKG & Langzeit-RR */
   lzPercent: number;
+  /** Percentage of patients (0–100) who receive Ergometrie */
+  ergoPercent: number;
   /** Maximum patient stay per visit day in minutes (default 120) */
   maxStayMinutes: number;
   /** Whether to add a 5-minute break between each examination */
@@ -100,7 +102,6 @@ export interface DayCapacityResult {
   week: 1 | 2 | 3;
   weekday: Weekday;
   activeStages: DayNumber[];
-  hasDeviceReturn: boolean;
   openingMinutes: number;
   resourceResults: ResourceCapacityResult[];
   /** Min across resources for this specific day */
@@ -118,6 +119,10 @@ export interface WeeklyCapacityResult {
   allResourceUtilization: ResourceCapacityResult[];
   /** Full 3-week per-day data (absDays 0–14) */
   threeWeekData: DayCapacityResult[];
+  /** Automatically determined best day (1 or 2) for Langzeit device attachment */
+  bestLzAnlegenDay: 1 | 2;
+  /** Automatically determined best visit day offsets */
+  bestVisitDayOffsets: [0, number, number];
 }
 
 export interface BottleneckSummary {
@@ -138,13 +143,3 @@ export interface Scenario {
   results: WeeklyCapacityResult | null;
 }
 
-export interface ImportState {
-  file: File | null;
-  sheets: string[];
-  activeSheet: string | null;
-  rawData: Record<string, unknown>[][];
-  columnMapping: Record<string, string>;
-  previewRows: Examination[];
-  errors: string[];
-  step: 'idle' | 'preview' | 'mapping' | 'ready';
-}

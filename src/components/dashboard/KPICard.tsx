@@ -3,6 +3,7 @@ interface KPICardProps {
   value: string | number
   subtitle?: string
   color?: 'blue' | 'green' | 'red' | 'orange' | 'gray'
+  onClick?: () => void
 }
 
 const colors = {
@@ -13,10 +14,20 @@ const colors = {
   gray: { bg: '#f8fafc', border: '#e2e8f0', text: '#374151', label: '#6b7280' },
 }
 
-export function KPICard({ title, value, subtitle, color = 'blue' }: KPICardProps) {
+export function KPICard({ title, value, subtitle, color = 'blue', onClick }: KPICardProps) {
   const c = colors[color]
   return (
-    <div style={{ background: c.bg, border: `1px solid ${c.border}`, borderRadius: '8px', padding: '1.25rem', flex: 1, minWidth: 0 }}>
+    <div
+      onClick={onClick}
+      style={{
+        background: c.bg, border: `1px solid ${c.border}`, borderRadius: '8px',
+        padding: '1.25rem', flex: 1, minWidth: 0,
+        cursor: onClick ? 'pointer' : undefined,
+        transition: onClick ? 'box-shadow 0.15s' : undefined,
+      }}
+      onMouseEnter={onClick ? (e) => { (e.currentTarget as HTMLElement).style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)' } : undefined}
+      onMouseLeave={onClick ? (e) => { (e.currentTarget as HTMLElement).style.boxShadow = 'none' } : undefined}
+    >
       <div style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{title}</div>
       <div style={{ fontSize: '2rem', fontWeight: 700, color: c.text, margin: '0.25rem 0' }}>{value}</div>
       {subtitle && <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>{subtitle}</div>}

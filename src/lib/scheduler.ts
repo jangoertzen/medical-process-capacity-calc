@@ -15,8 +15,7 @@ export interface ExamItem {
 
 export interface ScheduledExam {
   patientId: string;
-  /** DayNumber for regular visit patients; 'return' for device-return mini-visit */
-  stage: DayNumber | 'return';
+  stage: DayNumber;
   items: ExamItem[];
   startMin: number;
   endMin: number;
@@ -29,8 +28,6 @@ export interface WeekdaySchedule {
   weekday: Weekday;
   openingMinutes: number;
   activeStages: DayNumber[];
-  /** True if one or more cohorts have a Langzeit device return event on this day */
-  hasDeviceReturn: boolean;
   scheduledExams: ScheduledExam[];
   nPatientsPerStage: number;
 }
@@ -44,6 +41,12 @@ interface ExamBlock {
   duration: number;
   groupIds: string[];
   primaryGroupId: string;
+}
+
+interface ScheduledEntry {
+  block: ExamBlock;
+  start: number;
+  end: number;
 }
 
 /** True when exam belongs to a Langzeit device group and is an "anlegen" step */
@@ -60,6 +63,11 @@ function isLzAbnehmen(exam: Examination): boolean {
     (exam.resourceGroupId === 'langzeit-ekg' || exam.resourceGroupId === 'langzeit-rr') &&
     (exam.name.toLowerCase().includes('abnehmen') || exam.name.toLowerCase().includes('abnahme'))
   );
+}
+
+/** True if this block is the Abschlussgespräch (must always be scheduled last) */
+function isAbschluss(block: ExamBlock): boolean {
+  return block.items.some(it => it.name.toLowerCase().includes('abschlussgespräch'));
 }
 
 function buildExamBlocks(exams: Examination[]): ExamBlock[] {
@@ -144,10 +152,9 @@ export function buildWeekSchedule(
   config: ResourceConfig,
   nPatients: number,
 ): WeekdaySchedule[] {
-  const { startDays, visitDayOffsets, lzAnlegenDay } = config.scheduleConfig;
+  const { startDays, visitDayOffsets } = config.scheduleConfig;
+  const lzAnlegenDay = config.scheduleConfig.lzAnlegenDay;
 
-  // Cohort start abs days: include enough historical weeks so that even
-  // the longest check-up has its final stage land within the display window.
   const maxOffset = visitDayOffsets[2];
   const historyWeeks = Math.ceil(maxOffset / 5);
   const cohortStartAbsDays: number[] = [];
@@ -157,9 +164,6 @@ export function buildWeekSchedule(
     }
   }
 
-  const lzAnlegenOffset = visitDayOffsets[lzAnlegenDay - 1];
-  const lzReturnOffset = lzAnlegenOffset + 1;
-
   const schedules: WeekdaySchedule[] = [];
 
   for (let absDay = 0; absDay <= 14; absDay++) {
@@ -168,7 +172,6 @@ export function buildWeekSchedule(
     const openingMinutes = config.openingHours[weekday];
 
     const activeStages: DayNumber[] = [];
-    let hasDeviceReturn = false;
 
     for (const S of cohortStartAbsDays) {
       const offset = absDay - S;
@@ -180,15 +183,12 @@ export function buildWeekSchedule(
           if (!activeStages.includes(stage)) activeStages.push(stage);
         }
       }
-
-      if (offset === lzReturnOffset) hasDeviceReturn = true;
     }
 
-    if (activeStages.length === 0 && !hasDeviceReturn) continue;
+    if (activeStages.length === 0) continue;
 
     const scheduledExams = scheduleDay(
       activeStages,
-      hasDeviceReturn,
       lzAnlegenDay,
       examinations,
       resourceGroups,
@@ -202,7 +202,6 @@ export function buildWeekSchedule(
       weekday,
       openingMinutes,
       activeStages,
-      hasDeviceReturn,
       scheduledExams,
       nPatientsPerStage: nPatients,
     });
@@ -217,7 +216,6 @@ export function buildWeekSchedule(
 
 function scheduleDay(
   activeStages: DayNumber[],
-  hasDeviceReturn: boolean,
   lzAnlegenDay: 1 | 2,
   examinations: Examination[],
   resourceGroups: ResourceGroup[],
@@ -225,7 +223,9 @@ function scheduleDay(
   nPatients: number,
 ): ScheduledExam[] {
   const lzPercent = config.scheduleConfig.lzPercent ?? 100;
+  const ergoPercent = config.scheduleConfig.ergoPercent ?? 100;
   const nLzPatients = Math.round(nPatients * lzPercent / 100);
+  const nErgoPatients = Math.round(nPatients * ergoPercent / 100);
 
   // Shared resource slots across all patient groups
   const resourceSlots = new Map<string, number[]>();
@@ -239,9 +239,16 @@ function scheduleDay(
     return block.groupIds.some(gid => gid === 'langzeit-ekg' || gid === 'langzeit-rr');
   }
 
-  // Build exam blocks per visit stage — separate LZ and non-LZ blocks
+  /** True if this block involves Ergometrie exams */
+  function isErgoBlock(block: ExamBlock): boolean {
+    return block.groupIds.some(gid => gid === 'ergometrie');
+  }
+
+  // Build exam blocks per visit stage — separate variants for LZ and Ergo
   const stageBlocksAll = new Map<DayNumber, ExamBlock[]>();
   const stageBlocksNoLz = new Map<DayNumber, ExamBlock[]>();
+  const stageBlocksNoErgo = new Map<DayNumber, ExamBlock[]>();
+  const stageBlocksNoLzNoErgo = new Map<DayNumber, ExamBlock[]>();
 
   for (const stage of activeStages) {
     let stageExams = examinations.filter(e => {
@@ -261,148 +268,221 @@ function scheduleDay(
     const allBlocks = buildExamBlocks(stageExams);
     stageBlocksAll.set(stage, allBlocks);
     stageBlocksNoLz.set(stage, allBlocks.filter(b => !isLzBlock(b)));
+    stageBlocksNoErgo.set(stage, allBlocks.filter(b => !isErgoBlock(b)));
+    stageBlocksNoLzNoErgo.set(stage, allBlocks.filter(b => !isLzBlock(b) && !isErgoBlock(b)));
   }
-
-  // Exam blocks for device return mini-visit
-  const returnBlocks: ExamBlock[] = hasDeviceReturn
-    ? buildExamBlocks(examinations.filter(isLzAbnehmen))
-    : [];
 
   const result: ScheduledExam[] = [];
 
   // ---------------------------------------------------------------------------
-  // 1) Schedule device-return patients FIRST (only nLzPatients need to return).
-  //    Patients returning Langzeit devices come in first thing in the morning.
-  //    This frees devices before new ones are attached, so we never need more
-  //    devices than deviceCount (even when one cohort returns and another
-  //    attaches on the same day — the common case with consecutive startDays).
-  // ---------------------------------------------------------------------------
-  if (hasDeviceReturn && returnBlocks.length > 0) {
-    for (let p = 0; p < nLzPatients; p++) {
-      const patientId = `Return-P${String(p + 1).padStart(2, '0')}`;
-      let patientFree = 0;
-
-      for (const block of returnBlocks) {
-        let start = patientFree;
-        for (const groupId of block.groupIds) {
-          const slots = resourceSlots.get(groupId);
-          if (slots && slots.length > 0) start = Math.max(start, Math.min(...slots));
-        }
-        const end = start + block.duration;
-        for (const groupId of block.groupIds) {
-          const slots = resourceSlots.get(groupId);
-          if (slots) lockSlot(slots, end);
-        }
-        patientFree = end;
-        result.push({ patientId, stage: 'return', items: block.items, startMin: start, endMin: end, primaryGroupId: block.primaryGroupId });
-      }
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // 2) Schedule visit patients (interleaved across stages).
-  //    First nLzPatients get all blocks (incl. LZ anlegen); rest skip LZ blocks.
-  //    maxStayMinutes constrains the patient's total stay per visit day.
+  // Sequential per-patient scheduling with CROSS-STAGE contention awareness.
   //
-  //    Optimization: blocks whose resource groups are NOT shared with any other
-  //    block on the same stage ("flexible" blocks, e.g. Blutabnahme in its own
-  //    Lab room with a dedicated MFA) are deferred and inserted into wait gaps
-  //    between main-sequence blocks to minimize patient idle time.
+  // A block is "contended" if ANY of its resource groups is used by blocks in
+  // OTHER stages on the same day (not just within the patient's own stage).
+  // This ensures resources like arzt-sono (Ultraschall), which is used by
+  // Tag 1 (Abdomen-Sono), Tag 2 (Echokardiographie), and Tag 3 (Schilddrüsen),
+  // are treated as contended for ALL stages — preventing one stage from
+  // monopolising the resource and causing long waits for other stages.
+  //
+  // Strategy (3 phases per patient):
+  //  1. Schedule contended blocks greedily (earliest available resource).
+  //  2. Insert independent blocks into gaps between contended exams.
+  //  3. Schedule Abschlussgespräch last.
   // ---------------------------------------------------------------------------
   const maxStay = config.scheduleConfig.maxStayMinutes ?? 120;
   const breakMin = (config.scheduleConfig.breakBetweenExams ?? false) ? 5 : 0;
 
-  for (let p = 0; p < nPatients; p++) {
-    const hasLz = p < nLzPatients;
-    for (const stage of activeStages) {
+  /** Earliest time a block can start given patient availability and resource slots */
+  const earliestStart = (block: ExamBlock, earliest: number) => {
+    let start = earliest;
+    for (const groupId of block.groupIds) {
+      const slots = resourceSlots.get(groupId);
+      if (slots && slots.length > 0) start = Math.max(start, Math.min(...slots));
+    }
+    return start;
+  };
+
+  // Compute cross-stage contended resource groups.
+  // A group is contended if it appears in non-Abschluss blocks from ≥2 stages
+  // OR in ≥2 blocks within the same stage.
+  const groupBlockCount = new Map<string, number>();
+  const groupStageSet = new Map<string, Set<DayNumber>>();
+  for (const stage of activeStages) {
+    for (const block of (stageBlocksAll.get(stage) ?? [])) {
+      if (isAbschluss(block)) continue;
+      for (const gid of block.groupIds) {
+        groupBlockCount.set(gid, (groupBlockCount.get(gid) ?? 0) + 1);
+        if (!groupStageSet.has(gid)) groupStageSet.set(gid, new Set());
+        groupStageSet.get(gid)!.add(stage);
+      }
+    }
+  }
+  const contendedGroups = new Set<string>();
+  for (const [gid, count] of groupBlockCount) {
+    const stageCount = groupStageSet.get(gid)?.size ?? 0;
+    if (count > 1 || stageCount > 1) contendedGroups.add(gid);
+  }
+
+  // Process stages sequentially: stages with MORE exams first (Tag 1 before
+  // Tag 2/3). This gives Tag 1 patients priority on shared resources like
+  // Ultraschall, so their Funktionsdiagnostik flows directly into Sono
+  // without long waits caused by Tag 2 Echokardiographien in between.
+  const stagesByExamCount = [...activeStages].sort((a, b) => {
+    const aCount = (stageBlocksAll.get(a) ?? []).length;
+    const bCount = (stageBlocksAll.get(b) ?? []).length;
+    return bCount - aCount; // most exams first
+  });
+
+  for (const stage of stagesByExamCount) {
+    for (let p = 0; p < nPatients; p++) {
+      const hasLz = p < nLzPatients;
+      const hasErgo = p < nErgoPatients;
       const patientId = `T${stage}-P${String(p + 1).padStart(2, '0')}`;
       const blocks = hasLz
-        ? (stageBlocksAll.get(stage) ?? [])
-        : (stageBlocksNoLz.get(stage) ?? []);
+        ? (hasErgo ? (stageBlocksAll.get(stage) ?? []) : (stageBlocksNoErgo.get(stage) ?? []))
+        : (hasErgo ? (stageBlocksNoLz.get(stage) ?? []) : (stageBlocksNoLzNoErgo.get(stage) ?? []));
 
-      // Separate blocks into main sequence and flexible (gap-fillable).
-      // A block is flexible if NONE of its groupIds are used by any other block
-      // on this stage — it uses a completely independent resource.
-      const mainBlocks: ExamBlock[] = [];
-      const flexBlocks: ExamBlock[] = [];
+      if (blocks.length === 0) continue;
+
+      // Classify using cross-stage contention: a block is contended if ANY
+      // of its resource groups is globally contended on this day.
+      const contendedBlocks: ExamBlock[] = [];
+      const independentBlocks: ExamBlock[] = [];
+      let abschlussBlock: ExamBlock | null = null;
+
       for (const block of blocks) {
-        const isIndependent = block.groupIds.every(gid =>
-          !blocks.some(other => other !== block && other.groupIds.includes(gid)),
-        );
-        if (isIndependent) {
-          flexBlocks.push(block);
+        if (isAbschluss(block)) {
+          abschlussBlock = block;
         } else {
-          mainBlocks.push(block);
+          const isIndep = block.groupIds.every(gid => !contendedGroups.has(gid));
+          if (isIndep) {
+            independentBlocks.push(block);
+          } else {
+            contendedBlocks.push(block);
+          }
         }
       }
 
+      // Phase 1: Schedule contended blocks greedily (earliest available resource)
+      const scheduled: ScheduledEntry[] = [];
+      const contendedRemaining = contendedBlocks.map((_, i) => i);
       let patientFree = 0;
       let patientArrival = -1;
-      let blockIdx = 0;
-      const pendingFlex = [...flexBlocks];
+      let blockCount = 0;
 
-      /** Schedule a single block: lock resources, emit result, advance patientFree */
-      const scheduleBlock = (block: ExamBlock, start: number) => {
-        if (patientArrival < 0) {
-          patientArrival = start;
-        } else if (start + block.duration > patientArrival + maxStay) {
-          patientArrival = start + block.duration - maxStay;
+      while (contendedRemaining.length > 0) {
+        const minTime = blockCount > 0 ? patientFree + breakMin : patientFree;
+        let bestIdx = -1;
+        let bestStart = Infinity;
+        for (let r = 0; r < contendedRemaining.length; r++) {
+          const start = earliestStart(contendedBlocks[contendedRemaining[r]], minTime);
+          if (start < bestStart) {
+            bestStart = start;
+            bestIdx = r;
+          }
         }
-        const end = start + block.duration;
+        if (bestIdx < 0) break;
+
+        const block = contendedBlocks[contendedRemaining[bestIdx]];
+        const end = bestStart + block.duration;
+
+        if (patientArrival < 0) patientArrival = bestStart;
+        else if (end > patientArrival + maxStay) patientArrival = end - maxStay;
+
         for (const groupId of block.groupIds) {
           const slots = resourceSlots.get(groupId);
           if (slots) lockSlot(slots, end);
         }
         patientFree = end;
-        blockIdx++;
-        result.push({ patientId, stage, items: block.items, startMin: start, endMin: end, primaryGroupId: block.primaryGroupId });
-      };
+        blockCount++;
+        contendedRemaining.splice(bestIdx, 1);
+        scheduled.push({ block, start: bestStart, end });
+      }
 
-      /** Earliest time a block can start given patient availability and resource slots */
-      const earliestStart = (block: ExamBlock, earliest: number) => {
-        let start = earliest;
-        for (const groupId of block.groupIds) {
-          const slots = resourceSlots.get(groupId);
-          if (slots && slots.length > 0) start = Math.max(start, Math.min(...slots));
+      // Phase 2: Insert independent blocks into gaps between scheduled exams.
+      for (const indepBlock of independentBlocks) {
+        scheduled.sort((a, b) => a.start - b.start);
+
+        let bestGapStart = -1;
+        let bestGapWaste = Infinity;
+
+        // Try gap before first scheduled block — only if it's tight
+        // (prevents scheduling Blutabnahme 2 hours before first exam)
+        if (scheduled.length > 0) {
+          const gapEnd = scheduled[0].start;
+          const resStart = earliestStart(indepBlock, 0);
+          const resEnd = resStart + indepBlock.duration;
+          const waste = gapEnd - resEnd;
+          if (resEnd + breakMin <= gapEnd + breakMin && resStart < gapEnd && waste <= indepBlock.duration) {
+            bestGapStart = resStart;
+            bestGapWaste = waste;
+          }
         }
-        return start;
-      };
 
-      for (const block of mainBlocks) {
-        if (breakMin > 0 && blockIdx > 0) patientFree += breakMin;
+        // Try each gap between consecutive scheduled blocks
+        for (let g = 0; g < scheduled.length - 1; g++) {
+          const gapBegin = scheduled[g].end + breakMin;
+          const gapEnd = scheduled[g + 1].start;
+          if (gapEnd - gapBegin < indepBlock.duration) continue;
 
-        const mainStart = earliestStart(block, patientFree);
-
-        // Try to fill the wait gap [patientFree, mainStart) with flexible blocks
-        if (mainStart > patientFree && pendingFlex.length > 0) {
-          for (let f = 0; f < pendingFlex.length; f++) {
-            const flex = pendingFlex[f];
-            const flexAfterBreak = (breakMin > 0 && blockIdx > 0) ? patientFree : patientFree;
-            const flexStart = earliestStart(flex, flexAfterBreak);
-            const flexEnd = flexStart + flex.duration;
-            // Flexible block fits in the gap if it finishes before main block starts
-            // (with room for a break before the main block if needed)
-            const needed = flexEnd + (breakMin > 0 ? breakMin : 0);
-            if (flexStart < mainStart && needed <= mainStart) {
-              scheduleBlock(flex, flexStart);
-              pendingFlex.splice(f, 1);
-              f--;
-              // After scheduling flex, recalculate patientFree for next flex
-              if (breakMin > 0) patientFree += breakMin;
+          const resStart = earliestStart(indepBlock, gapBegin);
+          const resEnd = resStart + indepBlock.duration;
+          if (resEnd <= gapEnd) {
+            const waste = (gapEnd - gapBegin) - indepBlock.duration;
+            if (waste < bestGapWaste) {
+              bestGapWaste = waste;
+              bestGapStart = resStart;
             }
           }
         }
 
-        // Schedule the main block (recalculate start — patientFree may have advanced)
-        const finalStart = earliestStart(block, patientFree);
-        scheduleBlock(block, finalStart);
+        // If no gap fits, schedule after the last block
+        if (bestGapStart < 0) {
+          const minTime = blockCount > 0 ? patientFree + breakMin : patientFree;
+          bestGapStart = earliestStart(indepBlock, minTime);
+        }
+
+        const end = bestGapStart + indepBlock.duration;
+        if (patientArrival < 0) patientArrival = bestGapStart;
+        else if (end > patientArrival + maxStay) patientArrival = end - maxStay;
+
+        for (const groupId of indepBlock.groupIds) {
+          const slots = resourceSlots.get(groupId);
+          if (slots) lockSlot(slots, end);
+        }
+        if (end > patientFree) patientFree = end;
+        blockCount++;
+        scheduled.push({ block: indepBlock, start: bestGapStart, end });
       }
 
-      // Schedule remaining flexible blocks at the end
-      for (const flex of pendingFlex) {
-        if (breakMin > 0 && blockIdx > 0) patientFree += breakMin;
-        const start = earliestStart(flex, patientFree);
-        scheduleBlock(flex, start);
+      // Phase 3: Schedule Abschlussgespräch last (always the final exam)
+      if (abschlussBlock) {
+        const minTime = blockCount > 0 ? patientFree + breakMin : patientFree;
+        const start = earliestStart(abschlussBlock, minTime);
+        const end = start + abschlussBlock.duration;
+
+        if (patientArrival < 0) patientArrival = start;
+        else if (end > patientArrival + maxStay) patientArrival = end - maxStay;
+
+        for (const groupId of abschlussBlock.groupIds) {
+          const slots = resourceSlots.get(groupId);
+          if (slots) lockSlot(slots, end);
+        }
+        patientFree = end;
+        blockCount++;
+        scheduled.push({ block: abschlussBlock, start, end });
+      }
+
+      // Emit all scheduled entries sorted by time
+      scheduled.sort((a, b) => a.start - b.start);
+      for (const entry of scheduled) {
+        result.push({
+          patientId, stage,
+          items: entry.block.items,
+          startMin: entry.start,
+          endMin: entry.end,
+          primaryGroupId: entry.block.primaryGroupId,
+        });
       }
     }
   }
@@ -433,8 +513,6 @@ export function analyzeScheduleDay(schedule: WeekdaySchedule): DayAnalysis {
   }
 
   // 2. Compute wait times: gap between consecutive exams for the same patient.
-  //    The wait is attributed to the NEXT exam's resource group (the patient
-  //    is waiting for THAT resource to become available).
   const byPatient = new Map<string, ScheduledExam[]>();
   for (const exam of schedule.scheduledExams) {
     const list = byPatient.get(exam.patientId) ?? [];

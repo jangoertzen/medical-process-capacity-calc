@@ -31,11 +31,12 @@ State lives entirely in **`src/store/appStore.ts`** (Zustand + immer + persist t
 The capacity model is **concurrent cohorts**: on any weekday, patients from multiple cohorts (started on different days) are present simultaneously, each at a different stage (Tag 1, 2, or 3).
 
 Key concepts:
-- **`stageOrder`** (`[1,2,3]` or `[1,3,2]`): which patient stage occurs at each day-offset from the cohort start day. Swapping T2/T3 moves the Abschlussgespräch earlier.
 - **`startDays`**: which weekdays new cohorts begin (e.g. Mon/Tue/Wed). `weeklyThroughput = maxPatientsPerCohort × startDays.length`.
-- **`device_count` groups** (Langzeit-EKG, Langzeit-RR): hard cap = `floor(deviceCount / maxConcurrentDeviceCohorts)`. The device is loaned overnight — `deviceLoanDurationNights` determines how many cohorts hold devices simultaneously.
+- **`visitDayOffsets`** and **`lzAnlegenDay`**: auto-determined by the calculator — it tries all valid combinations (tag2: 1–5d, tag3: tag2+1–tag2+5d, lzAnlegenDay: 1 or 2) and picks the one with highest capacity. No device return scheduling.
+- **`device_count` groups** (Langzeit-EKG, Langzeit-RR): hard cap = `floor(deviceCount / (lzPercent / 100))`.
 - **`time_based` groups** (Funktionsraum, Ultraschall/arzt-sono): `floor(deviceCount × openingMinutes / totalDemandPerPatient)`. `arzt-sono` is `time_based` with `deviceCount=1` because there is only 1 ultrasound machine — all sono exams queue through it regardless of how many doctors are available.
 - **`staff_multiplied` groups** (Arzt-Sprechzeit, MFA-Kapazität): `floor(staffCount × openingMinutes / totalDemandPerPatient)`.
+- **Scheduler validation**: after analytical capacity is computed, the scheduler simulates the schedule; if exams exceed opening hours (e.g. due to `maxStayMinutes`), `maxPatientsPerCohort` is reduced.
 
 **Parallel step resolution** (`resolveSteps`): When exam A has `parallelWith=B` AND B has `parallelWith=A` AND they share the same `resourceGroupId`, they merge into one step with `duration = max(A, B)`. Cross-group parallel exams (e.g. LZ-EKG anlegen ↔ LZ-RR anlegen, which are in different groups) each create independent steps in their own group.
 
@@ -44,7 +45,7 @@ Key concepts:
 All interfaces are in one file. Key ones:
 - `Examination`: one row in the exam table — `day` (1/2/3), `parallelWith` (exam name), `resourceGroupId`
 - `ResourceGroup`: groups exams for capacity calculation — `groupType` determines the formula
-- `ScheduleConfig`: `startDays` + `visitDayOffsets` + `lzAnlegenDay`
+- `ScheduleConfig`: `startDays` + `visitDayOffsets` + `lzAnlegenDay` (latter two auto-determined by calculator)
 - `WeeklyCapacityResult` → `WeekdayCapacityResult[]` → `ResourceCapacityResult[]`
 
 ### Routing & Pages (`src/App.tsx`)
@@ -57,7 +58,7 @@ Hash-based navigation via react-router-dom. Pages: `dashboard`, `untersuchungen`
 
 ### State Persistence
 
-localStorage key is **`process-calc-v6`**. Bump the version key in `appStore.ts` when making breaking changes to the persisted state shape (`scenarios`, `activeScenarioId`, `compareScenarioIds`).
+localStorage key is **`process-calc-v13`**. Bump the version key in `appStore.ts` when making breaking changes to the persisted state shape (`scenarios`, `activeScenarioId`, `compareScenarioIds`).
 
 ### Path Alias
 

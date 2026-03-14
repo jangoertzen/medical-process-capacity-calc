@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { persist } from 'zustand/middleware';
+import { current } from 'immer';
 import type {
   Scenario,
   Examination,
@@ -133,7 +134,7 @@ export const useAppStore = create<AppState>()(
       createScenario: (name, baseId) => set(state => {
         const base = state.scenarios.find(s => s.id === (baseId ?? state.activeScenarioId));
         if (!base) return;
-        const newScenario: Scenario = structuredClone(base);
+        const newScenario: Scenario = structuredClone(current(base));
         newScenario.id = `scenario-${Date.now()}`;
         newScenario.name = name;
         newScenario.createdAt = new Date().toISOString();
@@ -166,7 +167,7 @@ export const useAppStore = create<AppState>()(
       }),
     })),
     {
-      name: 'process-calc-v11',
+      name: 'process-calc-v14',
       partialize: (state) => ({
         scenarios: state.scenarios,
         activeScenarioId: state.activeScenarioId,

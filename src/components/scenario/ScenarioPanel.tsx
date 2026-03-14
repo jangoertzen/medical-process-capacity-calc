@@ -26,7 +26,11 @@ export function ScenarioPanel() {
           style={{ flex: 1, padding: '0.4rem 0.6rem', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '0.85rem' }}
         />
         <button
-          onClick={() => { if (newName.trim()) { createScenario(newName.trim()); setNewName('') } }}
+          onClick={() => {
+            const name = newName.trim() || `Szenario ${scenarios.length + 1}`
+            createScenario(name)
+            setNewName('')
+          }}
           style={{ padding: '0.4rem 0.75rem', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.85rem' }}
         >
           <Plus size={14} /> Erstellen

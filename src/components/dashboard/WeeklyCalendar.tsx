@@ -128,14 +128,6 @@ export function WeeklyCalendar({ results, actualSlotsByDay }: Props) {
                                 {STAGE_LABEL[s]}
                               </span>
                             ))}
-                            {day.hasDeviceReturn && (
-                              <span style={{
-                                display: 'inline-block', margin: '0 1px',
-                                padding: '1px 5px', borderRadius: '4px',
-                                background: '#f1f5f9', border: '1px solid #cbd5e1',
-                                fontSize: '0.65rem', color: '#64748b',
-                              }}>↩ LZ</span>
-                            )}
                           </>
                         : <span style={{ color: '#cbd5e1' }}>—</span>
                       }

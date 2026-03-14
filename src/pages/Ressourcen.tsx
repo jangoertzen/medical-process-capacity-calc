@@ -128,24 +128,18 @@ export default function Ressourcen() {
           </div>
           <div>
             <label style={labelS}>Langzeit-Gerät anlegen</label>
-            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
-              {([1, 2] as const).map(day => {
-                const active = scheduleConfig.lzAnlegenDay === day
-                return (
-                  <button key={day} onClick={() => updateScheduleConfig({ lzAnlegenDay: day })} style={{
-                    padding: '0.35rem 0.8rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.82rem',
-                    border: `1px solid ${active ? '#3b82f6' : '#cbd5e1'}`,
-                    background: active ? '#eff6ff' : '#f8fafc',
-                    color: active ? '#1d4ed8' : '#64748b',
-                    fontWeight: active ? 600 : 400,
-                  }}>
-                    Anlegen an Tag {day}
-                  </button>
-                )
-              })}
+            <div style={{
+              padding: '0.35rem 0.8rem', borderRadius: '6px', fontSize: '0.82rem',
+              border: '1px solid #e2e8f0', background: '#f0fdf4', color: '#374151',
+              display: 'inline-flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.25rem',
+            }}>
+              <span style={{ fontWeight: 600 }}>
+                Anlegen an Tag {activeScenario.results?.bestLzAnlegenDay ?? scheduleConfig.lzAnlegenDay}
+              </span>
+              <span style={{ fontSize: '0.72rem', color: '#16a34a' }}>automatisch</span>
             </div>
             <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.3rem' }}>
-              Gerät wird jeweils am Folgetag (nächster Kalendertag) zurückgegeben.
+              Automatisch optimiert. Tag 3 ist ausgeschlossen.
             </div>
           </div>
           <div>
@@ -159,6 +153,19 @@ export default function Ressourcen() {
             </div>
             <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.3rem' }}>
               Anteil der Patienten, die Langzeit-EKG und Langzeit-RR erhalten.
+            </div>
+          </div>
+          <div>
+            <label style={labelS}>Ergometrie-Anteil (% der Patienten)</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.25rem' }}>
+              <input type="range" min={0} max={100} step={5}
+                value={scheduleConfig.ergoPercent ?? 100}
+                onChange={e => updateScheduleConfig({ ergoPercent: Number(e.target.value) })}
+                style={{ width: '160px', accentColor: '#3b82f6' }} />
+              <span style={{ fontWeight: 700, fontSize: '0.9rem', minWidth: '40px' }}>{scheduleConfig.ergoPercent ?? 100}%</span>
+            </div>
+            <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.3rem' }}>
+              Anteil der Patienten, die eine Fahrradergometrie erhalten.
             </div>
           </div>
           <div>

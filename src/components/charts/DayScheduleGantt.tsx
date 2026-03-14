@@ -14,9 +14,9 @@ const WD_LABELS: Record<Weekday, string> = {
 const WD_SHORT: Record<Weekday, string> = {
   Mon: 'Mo', Tue: 'Di', Wed: 'Mi', Thu: 'Do', Fri: 'Fr',
 }
-const STAGE_LABEL: Record<DayNumber | 'return', string> = { 1: 'Tag 1', 2: 'Tag 2', 3: 'Tag 3', return: 'Gerät zurück' }
-const STAGE_BG: Record<DayNumber | 'return', string> = { 1: '#eff6ff', 2: '#f0fdf4', 3: '#fefce8', return: '#f8fafc' }
-const STAGE_ROW_ALT: Record<DayNumber | 'return', string> = { 1: '#e0f2fe', 2: '#dcfce7', 3: '#fef9c3', return: '#f1f5f9' }
+const STAGE_LABEL: Record<DayNumber, string> = { 1: 'Tag 1', 2: 'Tag 2', 3: 'Tag 3' }
+const STAGE_BG: Record<DayNumber, string> = { 1: '#eff6ff', 2: '#f0fdf4', 3: '#fefce8' }
+const STAGE_ROW_ALT: Record<DayNumber, string> = { 1: '#e0f2fe', 2: '#dcfce7', 3: '#fef9c3' }
 
 /** Colors for exam blocks in patient view (keyed by resourceGroupId) */
 const GROUP_COLORS: Record<string, { bg: string; text: string }> = {
@@ -31,11 +31,10 @@ const GROUP_COLORS: Record<string, { bg: string; text: string }> = {
 const DEFAULT_COLOR = { bg: '#94a3b8', text: '#fff' }
 
 /** Colors for patient blocks in room view (keyed by stage) */
-const STAGE_COLOR: Record<DayNumber | 'return', { bg: string; text: string }> = {
+const STAGE_COLOR: Record<DayNumber, { bg: string; text: string }> = {
   1: { bg: '#3b82f6', text: '#fff' },
   2: { bg: '#16a34a', text: '#fff' },
   3: { bg: '#ca8a04', text: '#fff' },
-  return: { bg: '#94a3b8', text: '#fff' },
 }
 
 /** Preferred room display order */
@@ -65,7 +64,7 @@ function fmtTime(minutes: number): string {
 interface PatientRow {
   rowId: string
   label: string
-  stage: DayNumber | 'return'
+  stage: DayNumber
   exams: ScheduledExam[]
 }
 
@@ -83,18 +82,6 @@ function buildPatientRows(schedule: WeekdaySchedule): PatientRow[] {
       })
     }
   }
-  // Device return patients (Langzeit-Gerät Rückgabe)
-  if (schedule.hasDeviceReturn) {
-    for (let p = 1; p <= schedule.nPatientsPerStage; p++) {
-      const patientId = `Return-P${String(p).padStart(2, '0')}`
-      rows.push({
-        rowId: patientId,
-        label: `↩ Gerät P${p}`,
-        stage: 'return',
-        exams: schedule.scheduledExams.filter(e => e.patientId === patientId),
-      })
-    }
-  }
   return rows
 }
 
@@ -108,7 +95,7 @@ interface RoomEntry {
   startMin: number
   endMin: number
   patientId: string
-  stage: DayNumber | 'return'
+  stage: DayNumber
   groupId: string
 }
 
@@ -549,7 +536,7 @@ export function DayScheduleGantt({ scenario, nPatients }: Props) {
       }}>
         <span><strong style={{ color: '#1e293b' }}>{WD_LABELS[currentSchedule.weekday]}</strong></span>
         <span>Öffnungszeit: {fmtTime(0)} – {fmtTime(openingMinutes)}</span>
-        <span>Aktive Phasen: {[...activeStages].sort().map(s => STAGE_LABEL[s]).join(', ')}{currentSchedule.hasDeviceReturn ? ' + Geräterückgabe' : ''}</span>
+        <span>Aktive Phasen: {[...activeStages].sort().map(s => STAGE_LABEL[s]).join(', ')}</span>
         <span>{nPatients} Patient{nPatients !== 1 ? 'en' : ''}/Kohorte</span>
         <span style={{ color: '#94a3b8' }}>Überfahren Sie Blöcke für Details</span>
       </div>
@@ -570,7 +557,7 @@ export function DayScheduleGantt({ scenario, nPatients }: Props) {
                 </div>
               )
             })
-          : ([1, 2, 3, 'return'] as (DayNumber | 'return')[]).map(stage => (
+          : ([1, 2, 3] as DayNumber[]).map(stage => (
               <div key={stage} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
                 <div style={{ width: 12, height: 12, borderRadius: 2, background: STAGE_COLOR[stage].bg, flexShrink: 0 }} />
                 <span style={{ color: '#64748b' }}>{STAGE_LABEL[stage]} Patienten</span>

@@ -1,11 +1,12 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useAppStore } from '@/store/appStore'
 import { KPICard } from '@/components/dashboard/KPICard'
 import { BottleneckAlert } from '@/components/dashboard/BottleneckAlert'
 import { WeeklyCalendar } from '@/components/dashboard/WeeklyCalendar'
 import { DayScheduleGantt } from '@/components/charts/DayScheduleGantt'
 import { buildWeekSchedule, analyzeScheduleDay } from '@/lib/scheduler'
-import type { Weekday } from '@/types'
+import { computeQuickThroughput } from '@/lib/calculator'
+import type { Weekday, ResourceCapacityResult } from '@/types'
 
 const WEEKDAYS: Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
 const WD_DE: Record<Weekday, string> = { Mon: 'Mo', Tue: 'Di', Wed: 'Mi', Thu: 'Do', Fri: 'Fr' }
@@ -20,9 +21,18 @@ export default function Dashboard() {
   // Run scheduler & analyze for actual slot counts and wait times
   const scheduleAnalysis = useMemo(() => {
     if (!activeScenario || !results) return null
+    // Use the auto-determined bestLzAnlegenDay from the calculator
+    const configWithBestLz = {
+      ...activeScenario.resourceConfig,
+      scheduleConfig: {
+        ...activeScenario.resourceConfig.scheduleConfig,
+        lzAnlegenDay: results.bestLzAnlegenDay ?? activeScenario.resourceConfig.scheduleConfig.lzAnlegenDay,
+        visitDayOffsets: results.bestVisitDayOffsets ?? activeScenario.resourceConfig.scheduleConfig.visitDayOffsets,
+      },
+    }
     const allSchedules = buildWeekSchedule(
       activeScenario.examinations, activeScenario.resourceGroups,
-      activeScenario.resourceConfig, nPatients,
+      configWithBestLz, nPatients,
     )
     // Per absDay analyses
     const byAbsDay = new Map<number, ReturnType<typeof analyzeScheduleDay>>()
@@ -65,6 +75,74 @@ export default function Dashboard() {
 
   const monthlyRevenue = Math.round(revenuePerPatient * (results?.weeklyThroughput ?? 0) * 4)
 
+  // Collect ALL bottleneck resources (not just the first one)
+  const bottleneckInfo = useMemo(() => {
+    if (!results || !activeScenario) return { resources: [], sensitivityMap: new Map<string, number>() }
+
+    // Deduplicate by resourceGroupId
+    const seen = new Set<string>()
+    const resources: ResourceCapacityResult[] = []
+    for (const wd of results.weekdayResults) {
+      for (const r of wd.resourceResults) {
+        if (r.isBottleneck && !seen.has(r.resourceGroupId)) {
+          seen.add(r.resourceGroupId)
+          resources.push(r)
+        }
+      }
+    }
+
+    // For each bottleneck, compute how many extra check-ups +1 device/staff would give
+    const { examinations, resourceGroups, resourceConfig } = activeScenario
+    const sensitivityMap = new Map<string, number>()
+    const lzGroupIds = ['langzeit-ekg', 'langzeit-rr']
+
+    for (const r of resources) {
+      let modConfig = resourceConfig
+      const group = resourceGroups.find(g => g.id === r.resourceGroupId)
+      if (!group) continue
+
+      if (group.groupType === 'staff_multiplied') {
+        const groupExams = examinations.filter(e => group.examinationIds.includes(e.id))
+        if (groupExams.some(e => e.staffRole === 'Arzt')) {
+          modConfig = { ...resourceConfig, staff: { ...resourceConfig.staff, doctorCount: resourceConfig.staff.doctorCount + 1 } }
+        } else if (group.id === 'mfa-kapazitat') {
+          modConfig = { ...resourceConfig, staff: { ...resourceConfig.staff, mfaLabor: resourceConfig.staff.mfaLabor + 1 } }
+        } else {
+          modConfig = { ...resourceConfig, staff: { ...resourceConfig.staff, mfaFunktionsdiagnostik: resourceConfig.staff.mfaFunktionsdiagnostik + 1 } }
+        }
+      } else if (lzGroupIds.includes(group.id)) {
+        // Vary both LZ groups together
+        const ekgCount = (resourceConfig.groupOverrides['langzeit-ekg']?.deviceCount ?? 4) + 1
+        const rrCount = (resourceConfig.groupOverrides['langzeit-rr']?.deviceCount ?? 4) + 1
+        modConfig = {
+          ...resourceConfig,
+          groupOverrides: {
+            ...resourceConfig.groupOverrides,
+            'langzeit-ekg': { ...resourceConfig.groupOverrides['langzeit-ekg'], deviceCount: ekgCount },
+            'langzeit-rr': { ...resourceConfig.groupOverrides['langzeit-rr'], deviceCount: rrCount },
+          },
+        }
+      } else {
+        const currentCount = resourceConfig.groupOverrides[group.id]?.deviceCount ?? (group.groupType === 'device_count' ? group.slotsPerDay : 1)
+        modConfig = {
+          ...resourceConfig,
+          groupOverrides: {
+            ...resourceConfig.groupOverrides,
+            [group.id]: { ...resourceConfig.groupOverrides[group.id], deviceCount: currentCount + 1 },
+          },
+        }
+      }
+
+      const newTP = computeQuickThroughput(examinations, resourceGroups, modConfig)
+      const delta = newTP - results.weeklyThroughput
+      sensitivityMap.set(r.resourceGroupId, delta)
+    }
+
+    return { resources, sensitivityMap }
+  }, [results, activeScenario])
+
+  const [showBottleneckModal, setShowBottleneckModal] = useState(false)
+
   if (!results || !activeScenario) return <div>Keine Daten</div>
 
   const schedule = activeScenario.resourceConfig.scheduleConfig
@@ -76,27 +154,6 @@ export default function Dashboard() {
     updateScheduleConfig({ startDays: next as Weekday[] })
   }
 
-  const setTag2Offset = (delta: number) => {
-    const cur = schedule.visitDayOffsets[1]
-    const next = Math.max(1, Math.min(5, cur + delta))
-    if (next === cur) return
-    // Tag 3 must remain > Tag 2
-    const tag3 = Math.max(schedule.visitDayOffsets[2], next + 1)
-    updateScheduleConfig({ visitDayOffsets: [0, next, tag3] })
-  }
-
-  const setTag3Offset = (delta: number) => {
-    const tag2 = schedule.visitDayOffsets[1]
-    const cur = schedule.visitDayOffsets[2]
-    const next = Math.max(tag2 + 1, Math.min(tag2 + 5, cur + delta))
-    if (next === cur) return
-    updateScheduleConfig({ visitDayOffsets: [0, tag2, next] })
-  }
-
-  const toggleLzAnlegenDay = () => {
-    updateScheduleConfig({ lzAnlegenDay: schedule.lzAnlegenDay === 1 ? 2 : 1 })
-  }
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
       <div>
@@ -106,7 +163,7 @@ export default function Dashboard() {
         </p>
       </div>
 
-      <BottleneckAlert bottleneck={results.primaryBottleneck} />
+      <BottleneckAlert bottleneck={results.primaryBottleneck} allBottlenecks={bottleneckInfo.resources} />
 
       <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
         <KPICard
@@ -122,10 +179,15 @@ export default function Dashboard() {
           color={results.maxPatientsPerCohort <= 4 ? 'red' : 'green'}
         />
         <KPICard
-          title="Primärer Engpass"
-          value={results.primaryBottleneck.resourceGroupName || '—'}
-          subtitle={`am ${results.primaryBottleneck.affectedWeekday}`}
+          title={bottleneckInfo.resources.length > 1 ? 'Engpässe' : 'Primärer Engpass'}
+          value={bottleneckInfo.resources.length > 1
+            ? `${bottleneckInfo.resources.length} Ressourcen`
+            : (results.primaryBottleneck.resourceGroupName || '—')}
+          subtitle={bottleneckInfo.resources.length > 1
+            ? 'Klicken für Details'
+            : `am ${results.primaryBottleneck.affectedWeekday}`}
           color="orange"
+          onClick={bottleneckInfo.resources.length > 0 ? () => setShowBottleneckModal(true) : undefined}
         />
         <KPICard
           title="Monatsumsatz (extrapol.)"
@@ -172,24 +234,19 @@ export default function Dashboard() {
 
           <div>
             <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.4rem', fontWeight: 500 }}>
-              Tage zwischen den Besuchen
+              Besuchsabstände
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-              {([
-                { label: 'Tag 1 → Tag 2', value: schedule.visitDayOffsets[1], onMinus: () => setTag2Offset(-1), onPlus: () => setTag2Offset(1) },
-                { label: 'Tag 1 → Tag 3', value: schedule.visitDayOffsets[2], onMinus: () => setTag3Offset(-1), onPlus: () => setTag3Offset(1) },
-              ] as const).map(row => (
-                <div key={row.label} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ fontSize: '0.78rem', color: '#64748b', minWidth: '100px' }}>{row.label}</span>
-                  <button onClick={row.onMinus} style={stepBtn}>−</button>
-                  <span style={{ fontWeight: 700, minWidth: '20px', textAlign: 'center', fontSize: '0.9rem' }}>{row.value}</span>
-                  <button onClick={row.onPlus} style={stepBtn}>+</button>
-                  <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>Tage</span>
-                </div>
-              ))}
+            <div style={{
+              padding: '0.4rem 1rem', borderRadius: '6px', fontSize: '0.82rem',
+              border: '1px solid #e2e8f0', background: '#f0fdf4', color: '#374151',
+              display: 'flex', alignItems: 'center', gap: '0.75rem',
+            }}>
+              <span>Tag 1→2: <strong>{results.bestVisitDayOffsets[1]}</strong>d</span>
+              <span>Tag 1→3: <strong>{results.bestVisitDayOffsets[2]}</strong>d</span>
+              <span style={{ fontSize: '0.75rem', color: '#16a34a' }}>automatisch</span>
             </div>
             <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.3rem' }}>
-              Max. 5 Tage je Abstand. Tag 1, 2, 3 dürfen bis zu 5 Tage auseinanderliegen.
+              Automatisch optimiert (max. 5 Tage Abstand pro Termin).
             </div>
           </div>
 
@@ -197,18 +254,18 @@ export default function Dashboard() {
             <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.4rem', fontWeight: 500 }}>
               Langzeit-Gerät anlegen
             </div>
-            <button onClick={toggleLzAnlegenDay} style={{
-              padding: '0.4rem 1rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.82rem',
-              border: '1px solid #cbd5e1', background: '#fff', color: '#374151',
+            <div style={{
+              padding: '0.4rem 1rem', borderRadius: '6px', fontSize: '0.82rem',
+              border: '1px solid #e2e8f0', background: '#f0fdf4', color: '#374151',
               display: 'flex', alignItems: 'center', gap: '0.5rem',
             }}>
               <span style={{ fontWeight: 700 }}>
-                {schedule.lzAnlegenDay === 1 ? 'Anlegen an Tag 1' : 'Anlegen an Tag 2'}
+                Anlegen an Tag {results.bestLzAnlegenDay}
               </span>
-              <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>umschalten</span>
-            </button>
+              <span style={{ fontSize: '0.75rem', color: '#16a34a' }}>automatisch</span>
+            </div>
             <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.3rem' }}>
-              Gerät wird jeweils am Folgetag (nächster Kalendertag) zurückgegeben.
+              Automatisch optimiert. Gerät wird am Folgetag zurückgegeben. Tag 3 ist ausgeschlossen.
             </div>
           </div>
 
@@ -278,17 +335,102 @@ export default function Dashboard() {
           Wochenkalender — Tagesplan mit Uhrzeiten
         </div>
         <DayScheduleGantt
-          scenario={activeScenario}
+          scenario={{
+            ...activeScenario,
+            resourceConfig: {
+              ...activeScenario.resourceConfig,
+              scheduleConfig: {
+                ...activeScenario.resourceConfig.scheduleConfig,
+                lzAnlegenDay: results.bestLzAnlegenDay,
+                visitDayOffsets: results.bestVisitDayOffsets,
+              },
+            },
+          }}
           nPatients={Math.max(1, results.maxPatientsPerCohort)}
         />
       </div>
+
+      {/* Bottleneck detail modal */}
+      {showBottleneckModal && (
+        <div
+          onClick={() => setShowBottleneckModal(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#fff', borderRadius: '12px', padding: '1.5rem',
+              maxWidth: '520px', width: '90%', maxHeight: '80vh', overflowY: 'auto',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: '#1e293b' }}>
+                Engpass-Analyse
+              </h2>
+              <button
+                onClick={() => setShowBottleneckModal(false)}
+                style={{
+                  border: 'none', background: 'none', cursor: 'pointer',
+                  fontSize: '1.25rem', color: '#94a3b8', lineHeight: 1,
+                }}
+              >
+                &times;
+              </button>
+            </div>
+
+            <div style={{ fontSize: '0.82rem', color: '#64748b', marginBottom: '1rem' }}>
+              Aktueller Wochendurchsatz: <strong>{results.weeklyThroughput} Check-ups/Woche</strong>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {bottleneckInfo.resources.map(r => {
+                const delta = bottleneckInfo.sensitivityMap.get(r.resourceGroupId) ?? 0
+                return (
+                  <div
+                    key={r.resourceGroupId}
+                    style={{
+                      border: '1px solid #fecaca', borderRadius: '8px', padding: '1rem',
+                      background: '#fef2f2',
+                    }}
+                  >
+                    <div style={{ fontWeight: 700, color: '#b91c1c', fontSize: '0.9rem' }}>
+                      {r.resourceGroupName}
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#7f1d1d', marginTop: '0.25rem' }}>
+                      Kapazität: {r.limitingCapacity} Pat./Kohorte
+                    </div>
+                    {delta > 0 ? (
+                      <div style={{
+                        marginTop: '0.5rem', padding: '0.3rem 0.65rem', borderRadius: '5px',
+                        background: '#f0fdf4', border: '1px solid #bbf7d0',
+                        fontSize: '0.8rem', color: '#16a34a', fontWeight: 500, width: 'fit-content',
+                      }}>
+                        +1 Einheit &rarr; <strong>+{delta} Check-ups/Woche</strong>
+                      </div>
+                    ) : (
+                      <div style={{
+                        marginTop: '0.5rem', padding: '0.3rem 0.65rem', borderRadius: '5px',
+                        background: '#f8fafc', fontSize: '0.8rem', color: '#94a3b8', width: 'fit-content',
+                      }}>
+                        +1 Einheit bringt keinen Mehrwert (anderer Engpass limitiert)
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            {bottleneckInfo.resources.length === 0 && (
+              <div style={{ color: '#94a3b8', fontSize: '0.85rem' }}>Kein Engpass erkannt.</div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-const stepBtn: React.CSSProperties = {
-  width: '26px', height: '26px', borderRadius: '4px', border: '1px solid #cbd5e1',
-  background: '#f8fafc', cursor: 'pointer', fontSize: '1rem', lineHeight: 1,
-  display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600,
-  color: '#374151',
-}
