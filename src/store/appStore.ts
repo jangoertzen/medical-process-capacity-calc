@@ -167,7 +167,7 @@ export const useAppStore = create<AppState>()(
       }),
     })),
     {
-      name: 'process-calc-v14',
+      name: 'process-calc-v15',
       partialize: (state) => ({
         scenarios: state.scenarios,
         activeScenarioId: state.activeScenarioId,

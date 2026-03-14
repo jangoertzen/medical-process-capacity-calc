@@ -54,6 +54,8 @@ export interface ScheduleConfig {
   startDays: Weekday[];
   visitDayOffsets: [0, number, number];
   lzAnlegenDay: 1 | 2;
+  /** Number of visit days per patient: 2 or 3. When 2, Tag 3 exams move to Tag 2. */
+  programDays: 2 | 3;
   /** Percentage of patients (0–100) who receive Langzeit-EKG & Langzeit-RR */
   lzPercent: number;
   /** Percentage of patients (0–100) who receive Ergometrie */

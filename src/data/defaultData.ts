@@ -41,7 +41,7 @@ export const defaultResourceGroups: ResourceGroup[] = [
   },
   {
     id: 'arzt-sprechzeit',
-    name: 'Arzt-Sprechzeit',
+    name: 'Arztgespräch',
     examinationIds: ['e06', 'e15'],
     slotsPerDay: 16,
     groupType: 'staff_multiplied',
@@ -107,6 +107,8 @@ export const defaultResourceConfig: ResourceConfig = {
     visitDayOffsets: [0, 1, 2],
     // Langzeit devices are attached on Tag 1 and returned the following calendar day
     lzAnlegenDay: 1,
+    // 3-day program by default (Tag 1, 2, 3)
+    programDays: 3,
     // 100% of patients receive Langzeit measurements by default
     lzPercent: 100,
     // 100% of patients receive Ergometrie by default

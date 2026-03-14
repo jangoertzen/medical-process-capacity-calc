@@ -147,15 +147,20 @@ function lockSlot(slots: number[], endTime: number): void {
  * W1 cohorts start in week 1; W2 cohorts start in week 2; no W3 cohorts (ramp-down).
  */
 export function buildWeekSchedule(
-  examinations: Examination[],
+  rawExaminations: Examination[],
   resourceGroups: ResourceGroup[],
   config: ResourceConfig,
   nPatients: number,
 ): WeekdaySchedule[] {
+  const programDays = config.scheduleConfig.programDays ?? 3;
+  const examinations = programDays === 2
+    ? rawExaminations.map(e => e.day === 3 ? { ...e, day: 2 as DayNumber } : e)
+    : rawExaminations;
   const { startDays, visitDayOffsets } = config.scheduleConfig;
   const lzAnlegenDay = config.scheduleConfig.lzAnlegenDay;
 
-  const maxOffset = visitDayOffsets[2];
+  const numVisits = programDays === 2 ? 2 : 3;
+  const maxOffset = programDays === 2 ? visitDayOffsets[1] : visitDayOffsets[2];
   const historyWeeks = Math.ceil(maxOffset / 5);
   const cohortStartAbsDays: number[] = [];
   for (let w = -historyWeeks; w < 2; w++) {
@@ -177,7 +182,7 @@ export function buildWeekSchedule(
       const offset = absDay - S;
       if (offset < 0) continue;
 
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < numVisits; i++) {
         if (offset === visitDayOffsets[i]) {
           const stage = (i + 1) as DayNumber;
           if (!activeStages.includes(stage)) activeStages.push(stage);

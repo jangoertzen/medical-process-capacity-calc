@@ -11,6 +11,7 @@ export default function Untersuchungen() {
 
   if (!activeScenario) return null
 
+  const programDays = activeScenario.resourceConfig.scheduleConfig.programDays ?? 3
   const exams = activeScenario.examinations.filter(e => e.day === activeDay)
   // All exam names except the current one, for the "Parallel mit" selector
   const allExamNames = activeScenario.examinations.map(e => e.name)
@@ -24,7 +25,7 @@ export default function Untersuchungen() {
         </p>
       </div>
 
-      <div style={{ display: 'flex', gap: '0.5rem' }}>
+      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
         {([1, 2, 3] as DayNumber[]).map(d => (
           <button key={d} onClick={() => setActiveDay(d)} style={{
             padding: '0.4rem 1rem', borderRadius: '6px', border: '1px solid #e2e8f0', cursor: 'pointer',
@@ -36,6 +37,11 @@ export default function Untersuchungen() {
             {DAY_LABELS[d]}
           </button>
         ))}
+        {programDays === 2 && activeDay === 3 && (
+          <span style={{ fontSize: '0.75rem', color: '#f97316', fontWeight: 500 }}>
+            Im 2-Tage-Programm werden diese Untersuchungen an Tag 2 durchgeführt.
+          </span>
+        )}
       </div>
 
       <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>

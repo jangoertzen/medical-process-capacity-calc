@@ -15,6 +15,15 @@ import { buildWeekSchedule } from './scheduler';
 const WEEKDAY_ORDER: Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 
 // ---------------------------------------------------------------------------
+// 2-day program helper: remap Tag 3 exams to Tag 2
+// ---------------------------------------------------------------------------
+
+export function applyProgramDays(examinations: Examination[], programDays: 2 | 3): Examination[] {
+  if (programDays === 3) return examinations;
+  return examinations.map(e => e.day === 3 ? { ...e, day: 2 as DayNumber } : e);
+}
+
+// ---------------------------------------------------------------------------
 // Step resolution
 // ---------------------------------------------------------------------------
 
@@ -172,12 +181,13 @@ function activeStagesOnAbsDay(
   absDay: number,
   cohortStartAbsDays: number[],
   visitDayOffsets: [0, number, number],
+  numVisits: number = 3,
 ): DayNumber[] {
   const stages: DayNumber[] = [];
   for (const S of cohortStartAbsDays) {
     const offset = absDay - S;
     if (offset < 0) continue;
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < numVisits; i++) {
       if (offset === visitDayOffsets[i]) {
         const stage = (i + 1) as DayNumber;
         if (!stages.includes(stage)) stages.push(stage);
@@ -269,7 +279,8 @@ function computeAnalyticalCapacity(
 ): { weekdayResults: WeekdayCapacityResult[]; globalMaxN: number } {
   const { openingHours, scheduleConfig } = config;
   const { startDays } = scheduleConfig;
-  const maxOffset = visitDayOffsets[2];
+  const numVisits = (scheduleConfig.programDays ?? 3) === 2 ? 2 : 3;
+  const maxOffset = numVisits === 2 ? visitDayOffsets[1] : visitDayOffsets[2];
   const cohortStartAbsDays = getCohortStartAbsDays(startDays, maxOffset);
 
   const weekdayResults: WeekdayCapacityResult[] = [];
@@ -277,7 +288,7 @@ function computeAnalyticalCapacity(
   for (let absDay = 5; absDay <= 9; absDay++) {
     const weekday = WEEKDAY_ORDER[absDay % 5];
     const openingMinutes = openingHours[weekday];
-    const activeStages = activeStagesOnAbsDay(absDay, cohortStartAbsDays, visitDayOffsets);
+    const activeStages = activeStagesOnAbsDay(absDay, cohortStartAbsDays, visitDayOffsets, numVisits);
 
     if (activeStages.length === 0) continue;
 
@@ -337,23 +348,32 @@ function scheduleFitsOpeningHours(
 
 /**
  * Generate all valid visitDayOffset combinations.
- * Tag 2: offset 1–5, Tag 3: offset tag2+1 to tag2+5.
+ * For 3-day programs: Tag 2 offset 1–5, Tag 3 offset tag2+1 to tag2+5.
+ * For 2-day programs: Tag 2 offset 1–5, Tag 3 offset = 99 (never used).
  */
-function allVisitDayOffsets(): [0, number, number][] {
+function allVisitDayOffsets(programDays: 2 | 3 = 3): [0, number, number][] {
   const combos: [0, number, number][] = [];
-  for (let t2 = 1; t2 <= 5; t2++) {
-    for (let t3 = t2 + 1; t3 <= t2 + 5; t3++) {
-      combos.push([0, t2, t3]);
+  if (programDays === 2) {
+    for (let t2 = 1; t2 <= 5; t2++) {
+      combos.push([0, t2, 99]);
+    }
+  } else {
+    for (let t2 = 1; t2 <= 5; t2++) {
+      for (let t3 = t2 + 1; t3 <= t2 + 5; t3++) {
+        combos.push([0, t2, t3]);
+      }
     }
   }
   return combos;
 }
 
 export function calculateCapacity(
-  examinations: Examination[],
+  rawExaminations: Examination[],
   resourceGroups: ResourceGroup[],
   config: ResourceConfig,
 ): WeeklyCapacityResult {
+  const programDays = config.scheduleConfig.programDays ?? 3;
+  const examinations = applyProgramDays(rawExaminations, programDays);
   const allSteps = resolveSteps(examinations);
   const { scheduleConfig, openingHours } = config;
   const { startDays } = scheduleConfig;
@@ -364,7 +384,7 @@ export function calculateCapacity(
   let bestOffsets: [0, number, number] = [0, 1, 2];
   let bestResult: { weekdayResults: WeekdayCapacityResult[]; globalMaxN: number } | null = null;
 
-  for (const offsets of allVisitDayOffsets()) {
+  for (const offsets of allVisitDayOffsets(programDays)) {
     for (const lzDay of [1, 2] as const) {
       const result = computeAnalyticalCapacity(examinations, resourceGroups, config, allSteps, offsets, lzDay);
       if (result.globalMaxN > bestN) {
@@ -398,7 +418,8 @@ export function calculateCapacity(
   }
 
   // --- Three-week data (absDays 0–14) ---
-  const maxOffset = bestVisitDayOffsets[2];
+  const numVisits = programDays === 2 ? 2 : 3;
+  const maxOffset = numVisits === 2 ? bestVisitDayOffsets[1] : bestVisitDayOffsets[2];
   const cohortStartAbsDays = getCohortStartAbsDays(startDays, maxOffset);
   const threeWeekData: DayCapacityResult[] = [];
 
@@ -406,7 +427,7 @@ export function calculateCapacity(
     const weekday = WEEKDAY_ORDER[absDay % 5];
     const week = (Math.floor(absDay / 5) + 1) as 1 | 2 | 3;
     const openingMinutes = openingHours[weekday];
-    const activeStages = activeStagesOnAbsDay(absDay, cohortStartAbsDays, bestVisitDayOffsets);
+    const activeStages = activeStagesOnAbsDay(absDay, cohortStartAbsDays, bestVisitDayOffsets, numVisits);
 
     if (activeStages.length === 0) continue;
 
@@ -474,14 +495,16 @@ export function calculateCapacity(
  * Used for sensitivity analysis where many configs are compared.
  */
 export function computeQuickThroughput(
-  examinations: Examination[],
+  rawExaminations: Examination[],
   resourceGroups: ResourceGroup[],
   config: ResourceConfig,
 ): number {
+  const programDays = config.scheduleConfig.programDays ?? 3;
+  const examinations = applyProgramDays(rawExaminations, programDays);
   const allSteps = resolveSteps(examinations);
   let bestN = 0;
 
-  for (const offsets of allVisitDayOffsets()) {
+  for (const offsets of allVisitDayOffsets(programDays)) {
     for (const lzDay of [1, 2] as const) {
       const { globalMaxN } = computeAnalyticalCapacity(
         examinations, resourceGroups, config, allSteps, offsets, lzDay,

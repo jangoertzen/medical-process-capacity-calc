@@ -29,7 +29,7 @@ export default function Diagramme() {
         let field: string, label: string, current: number
 
         if (groupExams.some(e => e.staffRole === 'Arzt')) {
-          field = 'doctorCount'; label = 'Arzt-Sprechzeit'; current = resourceConfig.staff.doctorCount
+          field = 'doctorCount'; label = 'Arztgespräch'; current = resourceConfig.staff.doctorCount
         } else if (group.id === 'mfa-kapazitat') {
           field = 'mfaLabor'; label = 'MFA Labor (Blutentnahmen)'; current = resourceConfig.staff.mfaLabor
         } else {

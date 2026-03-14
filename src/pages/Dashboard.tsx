@@ -6,7 +6,7 @@ import { WeeklyCalendar } from '@/components/dashboard/WeeklyCalendar'
 import { DayScheduleGantt } from '@/components/charts/DayScheduleGantt'
 import { buildWeekSchedule, analyzeScheduleDay } from '@/lib/scheduler'
 import { computeQuickThroughput } from '@/lib/calculator'
-import type { Weekday, ResourceCapacityResult } from '@/types'
+import type { Weekday } from '@/types'
 
 const WEEKDAYS: Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
 const WD_DE: Record<Weekday, string> = { Mon: 'Mo', Tue: 'Di', Wed: 'Mi', Thu: 'Do', Fri: 'Fr' }
@@ -75,45 +75,46 @@ export default function Dashboard() {
 
   const monthlyRevenue = Math.round(revenuePerPatient * (results?.weeklyThroughput ?? 0) * 4)
 
-  // Collect ALL bottleneck resources (not just the first one)
+  // Sensitivity-based bottleneck detection: compute +1 delta for ALL resource groups,
+  // then flag any resource where adding one unit increases weekly throughput.
   const bottleneckInfo = useMemo(() => {
-    if (!results || !activeScenario) return { resources: [], sensitivityMap: new Map<string, number>() }
+    if (!results || !activeScenario) return { resources: [] as { groupId: string; groupName: string; delta: number; limitingCapacity: number }[] }
 
-    // Deduplicate by resourceGroupId
-    const seen = new Set<string>()
-    const resources: ResourceCapacityResult[] = []
-    for (const wd of results.weekdayResults) {
-      for (const r of wd.resourceResults) {
-        if (r.isBottleneck && !seen.has(r.resourceGroupId)) {
-          seen.add(r.resourceGroupId)
-          resources.push(r)
-        }
-      }
-    }
-
-    // For each bottleneck, compute how many extra check-ups +1 device/staff would give
     const { examinations, resourceGroups, resourceConfig } = activeScenario
-    const sensitivityMap = new Map<string, number>()
     const lzGroupIds = ['langzeit-ekg', 'langzeit-rr']
+    const seenStaffFields = new Set<string>()
+    const seenLz = { done: false }
+    const allDeltas: { groupId: string; groupName: string; delta: number; limitingCapacity: number }[] = []
 
-    for (const r of resources) {
+    for (const group of resourceGroups) {
+      // Skip groups with no active exams
+      if (!examinations.some(e => group.examinationIds.includes(e.id))) continue
+
       let modConfig = resourceConfig
-      const group = resourceGroups.find(g => g.id === r.resourceGroupId)
-      if (!group) continue
+      let label = group.name
+      let groupId = group.id
 
       if (group.groupType === 'staff_multiplied') {
         const groupExams = examinations.filter(e => group.examinationIds.includes(e.id))
+        let field: string
         if (groupExams.some(e => e.staffRole === 'Arzt')) {
-          modConfig = { ...resourceConfig, staff: { ...resourceConfig.staff, doctorCount: resourceConfig.staff.doctorCount + 1 } }
+          field = 'doctorCount'; label = 'Arztgespräch'
         } else if (group.id === 'mfa-kapazitat') {
-          modConfig = { ...resourceConfig, staff: { ...resourceConfig.staff, mfaLabor: resourceConfig.staff.mfaLabor + 1 } }
+          field = 'mfaLabor'; label = 'MFA Labor'
         } else {
-          modConfig = { ...resourceConfig, staff: { ...resourceConfig.staff, mfaFunktionsdiagnostik: resourceConfig.staff.mfaFunktionsdiagnostik + 1 } }
+          field = 'mfaFunktionsdiagnostik'; label = 'MFA Funktionsdiagnostik'
         }
+        if (seenStaffFields.has(field)) continue
+        seenStaffFields.add(field)
+        groupId = field
+        modConfig = { ...resourceConfig, staff: { ...resourceConfig.staff, [field]: resourceConfig.staff[field as keyof typeof resourceConfig.staff] + 1 } }
       } else if (lzGroupIds.includes(group.id)) {
-        // Vary both LZ groups together
-        const ekgCount = (resourceConfig.groupOverrides['langzeit-ekg']?.deviceCount ?? 4) + 1
-        const rrCount = (resourceConfig.groupOverrides['langzeit-rr']?.deviceCount ?? 4) + 1
+        if (seenLz.done) continue
+        seenLz.done = true
+        groupId = 'langzeit'
+        label = 'Langzeit-Geräte (EKG + RR)'
+        const ekgCount = (resourceConfig.groupOverrides['langzeit-ekg']?.deviceCount ?? resourceGroups.find(g => g.id === 'langzeit-ekg')?.slotsPerDay ?? 4) + 1
+        const rrCount = (resourceConfig.groupOverrides['langzeit-rr']?.deviceCount ?? resourceGroups.find(g => g.id === 'langzeit-rr')?.slotsPerDay ?? 4) + 1
         modConfig = {
           ...resourceConfig,
           groupOverrides: {
@@ -135,10 +136,27 @@ export default function Dashboard() {
 
       const newTP = computeQuickThroughput(examinations, resourceGroups, modConfig)
       const delta = newTP - results.weeklyThroughput
-      sensitivityMap.set(r.resourceGroupId, delta)
+
+      // Find the limiting capacity for this group from the weekday results
+      let limitingCap = Infinity
+      for (const wd of results.weekdayResults) {
+        for (const r of wd.resourceResults) {
+          if (r.resourceGroupId === group.id && r.limitingCapacity < limitingCap) {
+            limitingCap = r.limitingCapacity
+          }
+        }
+      }
+
+      allDeltas.push({ groupId, groupName: label, delta, limitingCapacity: limitingCap === Infinity ? 0 : limitingCap })
     }
 
-    return { resources, sensitivityMap }
+    // Sort by delta descending — resources with the biggest impact first
+    allDeltas.sort((a, b) => b.delta - a.delta)
+
+    // Bottlenecks = any resource where +1 actually increases throughput
+    const resources = allDeltas.filter(d => d.delta > 0)
+
+    return { resources }
   }, [results, activeScenario])
 
   const [showBottleneckModal, setShowBottleneckModal] = useState(false)
@@ -163,7 +181,7 @@ export default function Dashboard() {
         </p>
       </div>
 
-      <BottleneckAlert bottleneck={results.primaryBottleneck} allBottlenecks={bottleneckInfo.resources} />
+      <BottleneckAlert bottlenecks={bottleneckInfo.resources} />
 
       <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
         <KPICard
@@ -182,11 +200,13 @@ export default function Dashboard() {
           title={bottleneckInfo.resources.length > 1 ? 'Engpässe' : 'Primärer Engpass'}
           value={bottleneckInfo.resources.length > 1
             ? `${bottleneckInfo.resources.length} Ressourcen`
-            : (results.primaryBottleneck.resourceGroupName || '—')}
+            : (bottleneckInfo.resources[0]?.groupName || '—')}
           subtitle={bottleneckInfo.resources.length > 1
             ? 'Klicken für Details'
-            : `am ${results.primaryBottleneck.affectedWeekday}`}
-          color="orange"
+            : bottleneckInfo.resources.length === 1
+              ? `+1 → +${bottleneckInfo.resources[0].delta} Check-ups/Wo.`
+              : 'Kein Engpass'}
+          color={bottleneckInfo.resources.length > 0 ? 'orange' : 'green'}
           onClick={bottleneckInfo.resources.length > 0 ? () => setShowBottleneckModal(true) : undefined}
         />
         <KPICard
@@ -207,6 +227,30 @@ export default function Dashboard() {
       <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '1.25rem' }}>
         <div style={{ fontWeight: 600, marginBottom: '0.75rem', color: '#1e293b' }}>Patientenplan-Konfiguration</div>
         <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          <div>
+            <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.4rem', fontWeight: 500 }}>
+              Programmtage
+            </div>
+            <div style={{ display: 'flex', gap: '0.4rem' }}>
+              {([2, 3] as const).map(d => {
+                const active = (schedule.programDays ?? 3) === d
+                return (
+                  <button key={d} onClick={() => updateScheduleConfig({ programDays: d })} style={{
+                    padding: '0.3rem 0.65rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem',
+                    border: `1px solid ${active ? '#3b82f6' : '#cbd5e1'}`,
+                    background: active ? '#eff6ff' : '#f8fafc',
+                    color: active ? '#1d4ed8' : '#94a3b8',
+                    fontWeight: active ? 700 : 400,
+                  }}>
+                    {d} Tage
+                  </button>
+                )
+              })}
+            </div>
+            <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.3rem' }}>
+              Bei 2 Tagen werden SD-Sono und Abschlussgespräch an Tag 2 durchgeführt.
+            </div>
+          </div>
           <div>
             <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.4rem', fontWeight: 500 }}>
               Kohortenstart-Wochentage
@@ -242,7 +286,7 @@ export default function Dashboard() {
               display: 'flex', alignItems: 'center', gap: '0.75rem',
             }}>
               <span>Tag 1→2: <strong>{results.bestVisitDayOffsets[1]}</strong>d</span>
-              <span>Tag 1→3: <strong>{results.bestVisitDayOffsets[2]}</strong>d</span>
+              {(schedule.programDays ?? 3) === 3 && <span>Tag 1→3: <strong>{results.bestVisitDayOffsets[2]}</strong>d</span>}
               <span style={{ fontSize: '0.75rem', color: '#16a34a' }}>automatisch</span>
             </div>
             <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.3rem' }}>
@@ -265,7 +309,7 @@ export default function Dashboard() {
               <span style={{ fontSize: '0.75rem', color: '#16a34a' }}>automatisch</span>
             </div>
             <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.3rem' }}>
-              Automatisch optimiert. Gerät wird am Folgetag zurückgegeben. Tag 3 ist ausgeschlossen.
+              Automatisch optimiert. Gerät wird am Folgetag zurückgegeben.{(schedule.programDays ?? 3) === 3 && ' Tag 3 ist ausgeschlossen.'}
             </div>
           </div>
 
@@ -387,46 +431,27 @@ export default function Dashboard() {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {bottleneckInfo.resources.map(r => {
-                const delta = bottleneckInfo.sensitivityMap.get(r.resourceGroupId) ?? 0
-                return (
-                  <div
-                    key={r.resourceGroupId}
-                    style={{
-                      border: '1px solid #fecaca', borderRadius: '8px', padding: '1rem',
-                      background: '#fef2f2',
-                    }}
-                  >
-                    <div style={{ fontWeight: 700, color: '#b91c1c', fontSize: '0.9rem' }}>
-                      {r.resourceGroupName}
-                    </div>
-                    <div style={{ fontSize: '0.8rem', color: '#7f1d1d', marginTop: '0.25rem' }}>
-                      Kapazität: {r.limitingCapacity} Pat./Kohorte
-                    </div>
-                    {delta > 0 ? (
-                      <div style={{
-                        marginTop: '0.5rem', padding: '0.3rem 0.65rem', borderRadius: '5px',
-                        background: '#f0fdf4', border: '1px solid #bbf7d0',
-                        fontSize: '0.8rem', color: '#16a34a', fontWeight: 500, width: 'fit-content',
-                      }}>
-                        +1 Einheit &rarr; <strong>+{delta} Check-ups/Woche</strong>
-                      </div>
-                    ) : (
-                      <div style={{
-                        marginTop: '0.5rem', padding: '0.3rem 0.65rem', borderRadius: '5px',
-                        background: '#f8fafc', fontSize: '0.8rem', color: '#94a3b8', width: 'fit-content',
-                      }}>
-                        +1 Einheit bringt keinen Mehrwert (anderer Engpass limitiert)
-                      </div>
-                    )}
+              {bottleneckInfo.resources.map(r => (
+                <div
+                  key={r.groupId}
+                  style={{
+                    border: '1px solid #fecaca', borderRadius: '8px', padding: '1rem',
+                    background: '#fef2f2',
+                  }}
+                >
+                  <div style={{ fontWeight: 700, color: '#b91c1c', fontSize: '0.9rem' }}>
+                    {r.groupName}
                   </div>
-                )
-              })}
+                  <div style={{
+                    marginTop: '0.5rem', padding: '0.3rem 0.65rem', borderRadius: '5px',
+                    background: '#f0fdf4', border: '1px solid #bbf7d0',
+                    fontSize: '0.8rem', color: '#16a34a', fontWeight: 500, width: 'fit-content',
+                  }}>
+                    +1 Einheit &rarr; <strong>+{r.delta} Check-ups/Woche</strong>
+                  </div>
+                </div>
+              ))}
             </div>
-
-            {bottleneckInfo.resources.length === 0 && (
-              <div style={{ color: '#94a3b8', fontSize: '0.85rem' }}>Kein Engpass erkannt.</div>
-            )}
           </div>
         </div>
       )}
