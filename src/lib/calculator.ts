@@ -212,7 +212,7 @@ function computeDayResources(
   allSteps: Step[],
   lzAnlegenDay: 1 | 2,
 ): ResourceCapacityResult[] {
-  const { staff, groupOverrides } = config;
+  const { staff } = config;
   const lzPercent = config.scheduleConfig.lzPercent ?? 100;
   const ergoPercent = config.scheduleConfig.ergoPercent ?? 100;
   const resourceResults: ResourceCapacityResult[] = [];
@@ -223,7 +223,7 @@ function computeDayResources(
 
     if (group.groupType === 'device_count') {
       if (!hasAnlegenStage) continue;
-      const deviceCount = groupOverrides[group.id]?.deviceCount ?? group.slotsPerDay;
+      const deviceCount = group.deviceCount ?? group.slotsPerDay;
       if (lzPercent === 0) {
         continue;
       }
@@ -237,7 +237,7 @@ function computeDayResources(
       if (timePerPatientMin === 0) continue;
 
       if (group.groupType === 'time_based') {
-        const mult = groupOverrides[group.id]?.deviceCount ?? 1;
+        const mult = group.deviceCount ?? 1;
         limitingCapacity = Math.floor((mult * openingMinutes) / timePerPatientMin);
       } else {
         const staffCount = getStaffCount(group, examinations, staff);
@@ -336,6 +336,7 @@ function scheduleFitsOpeningHours(
     ...config,
     scheduleConfig: { ...config.scheduleConfig, visitDayOffsets, lzAnlegenDay },
   };
+
   const schedules = buildWeekSchedule(examinations, resourceGroups, overriddenConfig, nPatients);
   for (const s of schedules) {
     if (s.week !== 2) continue;

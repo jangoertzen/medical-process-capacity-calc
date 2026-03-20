@@ -2,24 +2,23 @@ import type { Examination, ResourceGroup, ResourceConfig } from '@/types';
 
 export const defaultExaminations: Examination[] = [
   // Day 1
-  { id: 'e01', day: 1, name: 'Blutabnahme', room: 'Labor', deviceCount: null, staffRole: 'MFA', durationMin: 5, parallelWith: null, resourceGroupId: 'mfa-kapazitat', revenueEur: 25 },
-  { id: 'e02', day: 1, name: 'EKG', room: 'Funktionsraum', deviceCount: null, staffRole: 'MFA', durationMin: 10, parallelWith: 'ABI-Messung', resourceGroupId: 'funktionsraum-tag1', revenueEur: 20 },
-  { id: 'e03', day: 1, name: 'ABI-Messung', room: 'Funktionsraum', deviceCount: null, staffRole: 'MFA', durationMin: 10, parallelWith: 'EKG', resourceGroupId: 'funktionsraum-tag1', revenueEur: 15 },
-  { id: 'e04', day: 1, name: 'Lungenfunktion', room: 'Funktionsraum', deviceCount: null, staffRole: 'MFA', durationMin: 5, parallelWith: null, resourceGroupId: 'funktionsraum-tag1', revenueEur: 25 },
-  { id: 'e05', day: 1, name: 'Abdomen-Sonographie', room: 'Sono', deviceCount: null, staffRole: 'Arzt', durationMin: 15, parallelWith: 'Körperliche Untersuchung', resourceGroupId: 'arzt-sono', revenueEur: 60 },
-  { id: 'e06', day: 1, name: 'Körperliche Untersuchung', room: 'Sprechzimmer', deviceCount: null, staffRole: 'Arzt', durationMin: 5, parallelWith: 'Abdomen-Sonographie', resourceGroupId: 'arzt-sprechzeit', revenueEur: 30 },
-  { id: 'e07', day: 1, name: 'Langzeit-EKG anlegen', room: 'Geräteraum', deviceCount: 4, staffRole: 'MFA', durationMin: 5, parallelWith: 'Langzeit-Blutdruck anlegen', resourceGroupId: 'langzeit-ekg', revenueEur: 50 },
-  { id: 'e08', day: 1, name: 'Langzeit-Blutdruck anlegen', room: 'Geräteraum', deviceCount: 4, staffRole: 'MFA', durationMin: 5, parallelWith: 'Langzeit-EKG anlegen', resourceGroupId: 'langzeit-rr', revenueEur: 30 },
+  { id: 'e01', day: 1, order: 1, name: 'Blutabnahme', room: 'Labor', staffRole: 'MFA', durationMin: 5, parallelWith: null, resourceGroupId: 'mfa-kapazitat', revenueEur: 25, mustFollowExamId: null },
+  { id: 'e02', day: 1, order: 2, name: 'EKG', room: 'Funktionsraum', staffRole: 'MFA', durationMin: 10, parallelWith: 'ABI-Messung', resourceGroupId: 'funktionsraum-tag1', revenueEur: 20, mustFollowExamId: null },
+  { id: 'e03', day: 1, order: 3, name: 'ABI-Messung', room: 'Funktionsraum', staffRole: 'MFA', durationMin: 10, parallelWith: 'EKG', resourceGroupId: 'funktionsraum-tag1', revenueEur: 15, mustFollowExamId: null },
+  { id: 'e04', day: 1, order: 4, name: 'Lungenfunktion', room: 'Funktionsraum', staffRole: 'MFA', durationMin: 5, parallelWith: null, resourceGroupId: 'funktionsraum-tag1', revenueEur: 25, mustFollowExamId: null },
+  { id: 'e05', day: 1, order: 5, name: 'Abdomen-Sonographie', room: 'Sono', staffRole: 'Arzt', durationMin: 15, parallelWith: 'Körperliche Untersuchung', resourceGroupId: 'arzt-sono', revenueEur: 60, mustFollowExamId: null },
+  { id: 'e06', day: 1, order: 6, name: 'Körperliche Untersuchung', room: 'Sprechzimmer', staffRole: 'Arzt', durationMin: 5, parallelWith: 'Abdomen-Sonographie', resourceGroupId: 'arzt-sprechzeit', revenueEur: 30, mustFollowExamId: null },
+  { id: 'e07', day: 1, order: 7, name: 'Langzeit-EKG anlegen', room: 'Geräteraum', staffRole: 'MFA', durationMin: 5, parallelWith: 'Langzeit-Blutdruck anlegen', resourceGroupId: 'langzeit-ekg', revenueEur: 50, mustFollowExamId: null },
+  { id: 'e08', day: 1, order: 8, name: 'Langzeit-Blutdruck anlegen', room: 'Geräteraum', staffRole: 'MFA', durationMin: 5, parallelWith: 'Langzeit-EKG anlegen', resourceGroupId: 'langzeit-rr', revenueEur: 30, mustFollowExamId: null },
   // Day 2
-  { id: 'e09', day: 2, name: 'Langzeit-EKG abnehmen', room: 'Geräteraum', deviceCount: 4, staffRole: 'MFA', durationMin: 2, parallelWith: 'Langzeit-Blutdruck abnehmen', resourceGroupId: 'langzeit-ekg', revenueEur: 0 },
-  { id: 'e10', day: 2, name: 'Langzeit-Blutdruck abnehmen', room: 'Geräteraum', deviceCount: 4, staffRole: 'MFA', durationMin: 2, parallelWith: 'Langzeit-EKG abnehmen', resourceGroupId: 'langzeit-rr', revenueEur: 0 },
-  { id: 'e12', day: 2, name: 'Echokardiographie', room: 'Sono', deviceCount: null, staffRole: 'Arzt', durationMin: 15, parallelWith: 'Duplex hirnversorgende Gefäße', resourceGroupId: 'arzt-sono', revenueEur: 80 },
-  { id: 'e13', day: 2, name: 'Duplex hirnversorgende Gefäße', room: 'Sono', deviceCount: null, staffRole: 'Arzt', durationMin: 15, parallelWith: 'Echokardiographie', resourceGroupId: 'arzt-sono', revenueEur: 60 },
-  // Ergometrie muss nach Echo/Duplex stattfinden (Reihenfolge ist relevant für Scheduler)
-  { id: 'e11', day: 2, name: 'Fahrradergometrie', room: 'Ergometrieraum', deviceCount: 1, staffRole: 'MFA', durationMin: 20, parallelWith: null, resourceGroupId: 'ergometrie', revenueEur: 40 },
+  { id: 'e09', day: 2, order: 1, name: 'Langzeit-EKG abnehmen', room: 'Geräteraum', staffRole: 'MFA', durationMin: 2, parallelWith: 'Langzeit-Blutdruck abnehmen', resourceGroupId: 'langzeit-ekg', revenueEur: 0, mustFollowExamId: null },
+  { id: 'e10', day: 2, order: 2, name: 'Langzeit-Blutdruck abnehmen', room: 'Geräteraum', staffRole: 'MFA', durationMin: 2, parallelWith: 'Langzeit-EKG abnehmen', resourceGroupId: 'langzeit-rr', revenueEur: 0, mustFollowExamId: null },
+  { id: 'e12', day: 2, order: 3, name: 'Echokardiographie', room: 'Sono', staffRole: 'Arzt', durationMin: 15, parallelWith: 'Duplex hirnversorgende Gefäße', resourceGroupId: 'arzt-sono', revenueEur: 80, mustFollowExamId: null },
+  { id: 'e13', day: 2, order: 4, name: 'Duplex hirnversorgende Gefäße', room: 'Sono', staffRole: 'Arzt', durationMin: 15, parallelWith: 'Echokardiographie', resourceGroupId: 'arzt-sono', revenueEur: 60, mustFollowExamId: null },
+  { id: 'e11', day: 2, order: 5, name: 'Fahrradergometrie', room: 'Ergometrieraum', staffRole: 'MFA', durationMin: 20, parallelWith: null, resourceGroupId: 'ergometrie', revenueEur: 40, mustFollowExamId: 'e12' },
   // Day 3
-  { id: 'e14', day: 3, name: 'Schilddrüsen-Sonographie', room: 'Sono', deviceCount: null, staffRole: 'Arzt', durationMin: 5, parallelWith: null, resourceGroupId: 'arzt-sono', revenueEur: 40 },
-  { id: 'e15', day: 3, name: 'Abschlussgespräch', room: 'Sprechzimmer', deviceCount: null, staffRole: 'Arzt', durationMin: 10, parallelWith: null, resourceGroupId: 'arzt-sprechzeit', revenueEur: 50 },
+  { id: 'e14', day: 3, order: 1, name: 'Schilddrüsen-Sonographie', room: 'Sono', staffRole: 'Arzt', durationMin: 5, parallelWith: null, resourceGroupId: 'arzt-sono', revenueEur: 40, mustFollowExamId: null },
+  { id: 'e15', day: 3, order: 2, name: 'Abschlussgespräch', room: 'Sprechzimmer', staffRole: 'Arzt', durationMin: 10, parallelWith: null, resourceGroupId: 'arzt-sprechzeit', revenueEur: 50, mustFollowExamId: null },
 ];
 
 export const defaultResourceGroups: ResourceGroup[] = [
@@ -29,6 +28,7 @@ export const defaultResourceGroups: ResourceGroup[] = [
     examinationIds: ['e02', 'e03', 'e04'],
     slotsPerDay: 16,
     groupType: 'time_based',
+    deviceCount: null,
     note: '1 MFA Funktionsdiagnostik',
   },
   {
@@ -37,6 +37,7 @@ export const defaultResourceGroups: ResourceGroup[] = [
     examinationIds: ['e05', 'e12', 'e13', 'e14'],
     slotsPerDay: 16,
     groupType: 'time_based',
+    deviceCount: 1,
     note: '1 Ultraschallgerät — serialisiert alle Sono-Untersuchungen',
   },
   {
@@ -45,6 +46,7 @@ export const defaultResourceGroups: ResourceGroup[] = [
     examinationIds: ['e06', 'e15'],
     slotsPerDay: 16,
     groupType: 'staff_multiplied',
+    deviceCount: null,
     note: '5 Ärzte',
   },
   {
@@ -53,6 +55,7 @@ export const defaultResourceGroups: ResourceGroup[] = [
     examinationIds: ['e01'],
     slotsPerDay: 16,
     groupType: 'staff_multiplied',
+    deviceCount: null,
     note: '1 MFA Labor',
   },
   {
@@ -61,6 +64,7 @@ export const defaultResourceGroups: ResourceGroup[] = [
     examinationIds: ['e07', 'e09'],
     slotsPerDay: 4,
     groupType: 'device_count',
+    deviceCount: 4,
     note: '4 LZ-EKG-Geräte (Patienten nehmen Gerät mit)',
   },
   {
@@ -69,6 +73,7 @@ export const defaultResourceGroups: ResourceGroup[] = [
     examinationIds: ['e08', 'e10'],
     slotsPerDay: 4,
     groupType: 'device_count',
+    deviceCount: 4,
     note: '4 LZ-RR-Geräte (Patienten nehmen Gerät mit)',
   },
   {
@@ -77,6 +82,7 @@ export const defaultResourceGroups: ResourceGroup[] = [
     examinationIds: ['e11'],
     slotsPerDay: 4,
     groupType: 'time_based',
+    deviceCount: 1,
     note: '1 Ergometer',
   },
 ];
@@ -93,12 +99,6 @@ export const defaultResourceConfig: ResourceConfig = {
     doctorCount: 5,
     mfaFunktionsdiagnostik: 1,
     mfaLabor: 1,
-  },
-  groupOverrides: {
-    'arzt-sono': { deviceCount: 1 },
-    ergometrie: { deviceCount: 1 },
-    'langzeit-ekg': { deviceCount: 4 },
-    'langzeit-rr': { deviceCount: 4 },
   },
   scheduleConfig: {
     // New patients can start any weekday

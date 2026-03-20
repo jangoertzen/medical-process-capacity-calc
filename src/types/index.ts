@@ -9,7 +9,6 @@ export interface Examination {
   day: DayNumber;
   name: string;
   room: string;
-  deviceCount: number | null;
   staffRole: 'MFA' | 'Arzt';
   durationMin: number;
   parallelWith: string | null;
@@ -17,6 +16,10 @@ export interface Examination {
   isAssumedDefault?: boolean;
   /** Revenue per examination in EUR */
   revenueEur: number;
+  /** Order within the day for drag & drop sorting */
+  order: number;
+  /** This exam must always be scheduled after the referenced exam id */
+  mustFollowExamId: string | null;
 }
 
 export interface ResourceGroup {
@@ -26,17 +29,14 @@ export interface ResourceGroup {
   slotsPerDay: number;
   groupType: ResourceGroupType;
   note?: string;
+  /** Number of devices/rooms for this group (device_count and time_based groups) */
+  deviceCount: number | null;
 }
 
 export interface StaffConfig {
   doctorCount: number;
   mfaFunktionsdiagnostik: number;
   mfaLabor: number;
-}
-
-export interface GroupOverride {
-  deviceCount?: number;
-  roomCount?: number;
 }
 
 /**
@@ -69,7 +69,6 @@ export interface ScheduleConfig {
 export interface ResourceConfig {
   openingHours: OpeningHours;
   staff: StaffConfig;
-  groupOverrides: Record<string, GroupOverride>;
   scheduleConfig: ScheduleConfig;
 }
 
@@ -144,4 +143,3 @@ export interface Scenario {
   resourceConfig: ResourceConfig;
   results: WeeklyCapacityResult | null;
 }
-

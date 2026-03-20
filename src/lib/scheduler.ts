@@ -115,10 +115,9 @@ function getGroupSlots(
   examinations: Examination[],
   config: ResourceConfig,
 ): number {
-  const override = config.groupOverrides[group.id];
   switch (group.groupType) {
     case 'time_based':
-      return Math.max(1, override?.deviceCount ?? 1);
+      return Math.max(1, group.deviceCount ?? 1);
     case 'device_count':
       return 1; // setup is serial (1 MFA in Geräteraum at a time)
     case 'staff_multiplied': {

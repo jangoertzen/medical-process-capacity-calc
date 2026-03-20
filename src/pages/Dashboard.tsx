@@ -113,25 +113,40 @@ export default function Dashboard() {
         seenLz.done = true
         groupId = 'langzeit'
         label = 'Langzeit-Geräte (EKG + RR)'
-        const ekgCount = (resourceConfig.groupOverrides['langzeit-ekg']?.deviceCount ?? resourceGroups.find(g => g.id === 'langzeit-ekg')?.slotsPerDay ?? 4) + 1
-        const rrCount = (resourceConfig.groupOverrides['langzeit-rr']?.deviceCount ?? resourceGroups.find(g => g.id === 'langzeit-rr')?.slotsPerDay ?? 4) + 1
-        modConfig = {
-          ...resourceConfig,
-          groupOverrides: {
-            ...resourceConfig.groupOverrides,
-            'langzeit-ekg': { ...resourceConfig.groupOverrides['langzeit-ekg'], deviceCount: ekgCount },
-            'langzeit-rr': { ...resourceConfig.groupOverrides['langzeit-rr'], deviceCount: rrCount },
-          },
+        const ekgCount = (resourceGroups.find(g => g.id === 'langzeit-ekg')?.deviceCount ?? 4) + 1
+        const rrCount = (resourceGroups.find(g => g.id === 'langzeit-rr')?.deviceCount ?? 4) + 1
+        const modGroups = resourceGroups.map(g =>
+          g.id === 'langzeit-ekg' ? { ...g, deviceCount: ekgCount }
+          : g.id === 'langzeit-rr' ? { ...g, deviceCount: rrCount }
+          : g
+        )
+        const newTP = computeQuickThroughput(examinations, modGroups, modConfig)
+        const delta = newTP - results.weeklyThroughput
+        let limitingCap = Infinity
+        for (const wd of results.weekdayResults) {
+          for (const r of wd.resourceResults) {
+            if ((r.resourceGroupId === 'langzeit-ekg' || r.resourceGroupId === 'langzeit-rr') && r.limitingCapacity < limitingCap) {
+              limitingCap = r.limitingCapacity
+            }
+          }
         }
+        allDeltas.push({ groupId, groupName: label, delta, limitingCapacity: limitingCap === Infinity ? 0 : limitingCap })
+        continue
       } else {
-        const currentCount = resourceConfig.groupOverrides[group.id]?.deviceCount ?? (group.groupType === 'device_count' ? group.slotsPerDay : 1)
-        modConfig = {
-          ...resourceConfig,
-          groupOverrides: {
-            ...resourceConfig.groupOverrides,
-            [group.id]: { ...resourceConfig.groupOverrides[group.id], deviceCount: currentCount + 1 },
-          },
+        const currentCount = group.deviceCount ?? (group.groupType === 'device_count' ? group.slotsPerDay : 1)
+        const modGroups = resourceGroups.map(g => g.id === group.id ? { ...g, deviceCount: currentCount + 1 } : g)
+        const newTP = computeQuickThroughput(examinations, modGroups, modConfig)
+        const delta = newTP - results.weeklyThroughput
+        let limitingCap = Infinity
+        for (const wd of results.weekdayResults) {
+          for (const r of wd.resourceResults) {
+            if (r.resourceGroupId === group.id && r.limitingCapacity < limitingCap) {
+              limitingCap = r.limitingCapacity
+            }
+          }
         }
+        allDeltas.push({ groupId, groupName: label, delta, limitingCapacity: limitingCap === Infinity ? 0 : limitingCap })
+        continue
       }
 
       const newTP = computeQuickThroughput(examinations, resourceGroups, modConfig)

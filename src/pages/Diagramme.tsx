@@ -48,10 +48,11 @@ export default function Diagramme() {
           label,
           xLabel,
           currentCount: current,
-          makeConfig: (n) => ({
-            ...resourceConfig,
-            staff: { ...resourceConfig.staff, [field]: n },
-          }),
+          compute: (n) => computeQuickThroughput(
+            examinations,
+            resourceGroups,
+            { ...resourceConfig, staff: { ...resourceConfig.staff, [field]: n } },
+          ),
         })
       } else {
         // time_based or device_count
@@ -61,10 +62,8 @@ export default function Diagramme() {
           if (seenStaffFields.has('langzeit')) continue
           seenStaffFields.add('langzeit')
 
-          const currentEkg = resourceConfig.groupOverrides['langzeit-ekg']?.deviceCount
-            ?? resourceGroups.find(g => g.id === 'langzeit-ekg')?.slotsPerDay ?? 4
-          const currentRr = resourceConfig.groupOverrides['langzeit-rr']?.deviceCount
-            ?? resourceGroups.find(g => g.id === 'langzeit-rr')?.slotsPerDay ?? 4
+          const currentEkg = resourceGroups.find(g => g.id === 'langzeit-ekg')?.deviceCount ?? 4
+          const currentRr = resourceGroups.find(g => g.id === 'langzeit-rr')?.deviceCount ?? 4
           const current = Math.min(currentEkg, currentRr)
 
           items.push({
@@ -72,32 +71,29 @@ export default function Diagramme() {
             label: 'Langzeit-Geräte (EKG + RR)',
             xLabel: 'Anzahl Geräte',
             currentCount: current,
-            makeConfig: (n) => ({
-              ...resourceConfig,
-              groupOverrides: {
-                ...resourceConfig.groupOverrides,
-                'langzeit-ekg': { ...resourceConfig.groupOverrides['langzeit-ekg'], deviceCount: n },
-                'langzeit-rr': { ...resourceConfig.groupOverrides['langzeit-rr'], deviceCount: n },
-              },
-            }),
+            compute: (n) => computeQuickThroughput(
+              examinations,
+              resourceGroups.map(g =>
+                g.id === 'langzeit-ekg' || g.id === 'langzeit-rr'
+                  ? { ...g, deviceCount: n }
+                  : g
+              ),
+              resourceConfig,
+            ),
           })
         } else {
-          const defaultCount = group.groupType === 'device_count'
-            ? (resourceConfig.groupOverrides[group.id]?.deviceCount ?? group.slotsPerDay)
-            : (resourceConfig.groupOverrides[group.id]?.deviceCount ?? 1)
+          const defaultCount = group.deviceCount ?? (group.groupType === 'device_count' ? group.slotsPerDay : 1)
 
           items.push({
             id: group.id,
             label: group.name,
             xLabel: 'Anzahl Geräte',
             currentCount: defaultCount,
-            makeConfig: (n) => ({
-              ...resourceConfig,
-              groupOverrides: {
-                ...resourceConfig.groupOverrides,
-                [group.id]: { ...resourceConfig.groupOverrides[group.id], deviceCount: n },
-              },
-            }),
+            compute: (n) => computeQuickThroughput(
+              examinations,
+              resourceGroups.map(g => g.id === group.id ? { ...g, deviceCount: n } : g),
+              resourceConfig,
+            ),
           })
         }
       }
@@ -153,8 +149,6 @@ export default function Diagramme() {
               <ResourceSensitivityChart
                 key={param.id}
                 param={param}
-                examinations={activeScenario.examinations}
-                resourceGroups={activeScenario.resourceGroups}
               />
             ))}
           </div>
@@ -180,12 +174,7 @@ export default function Diagramme() {
               <tbody>
                 {sensitivityParams.map(param => {
                   const currentTP = results.weeklyThroughput
-                  const nextConfig = param.makeConfig(param.currentCount + 1)
-                  const nextTP = computeQuickThroughput(
-                    activeScenario.examinations,
-                    activeScenario.resourceGroups,
-                    nextConfig,
-                  )
+                  const nextTP = param.compute(param.currentCount + 1)
                   const delta = nextTP - currentTP
                   return (
                     <tr key={param.id} style={{ borderTop: '1px solid #f1f5f9' }}>

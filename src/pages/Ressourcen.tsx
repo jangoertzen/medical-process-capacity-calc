@@ -8,11 +8,10 @@ export default function Ressourcen() {
   const activeScenario = useAppStore(s => s.getActiveScenario())
   const updateOpeningHours = useAppStore(s => s.updateOpeningHours)
   const updateStaff = useAppStore(s => s.updateStaff)
-  const updateGroupOverride = useAppStore(s => s.updateGroupOverride)
   const updateScheduleConfig = useAppStore(s => s.updateScheduleConfig)
 
   if (!activeScenario) return null
-  const { openingHours, staff, groupOverrides, scheduleConfig } = activeScenario.resourceConfig
+  const { openingHours, staff, scheduleConfig } = activeScenario.resourceConfig
 
   const toggleStartDay = (wd: Weekday) => {
     const next = scheduleConfig.startDays.includes(wd)
@@ -26,7 +25,16 @@ export default function Ressourcen() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       <div>
         <h1 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#1e293b', margin: 0 }}>Ressourcen</h1>
-        <p style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '0.25rem', marginBottom: 0 }}>Konfiguriere Öffnungszeiten, Personal und Geräte.</p>
+        <p style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '0.25rem', marginBottom: 0 }}>Konfiguriere Öffnungszeiten, Personal und Patientenplan.</p>
+      </div>
+
+      <div style={{
+        padding: '0.6rem 1rem', background: '#f0fdf4', borderRadius: '8px',
+        border: '1px solid #bbf7d0', fontSize: '0.82rem', color: '#374151',
+        display: 'flex', alignItems: 'center', gap: '0.5rem',
+      }}>
+        <span>Geräte- und Raumkonfiguration</span>
+        <span style={{ fontWeight: 700, color: '#16a34a' }}>→ Reiter Untersuchungen</span>
       </div>
 
       <Card title="Öffnungszeiten">
@@ -65,38 +73,6 @@ export default function Ressourcen() {
             <label style={labelS}>MFA Labor</label>
             <input type="number" min={1} max={10} value={staff.mfaLabor}
               onChange={e => updateStaff({ mfaLabor: Number(e.target.value) })}
-              style={numInputS} />
-          </div>
-        </div>
-      </Card>
-
-      <Card title="Geräte-Overrides">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
-          <div>
-            <label style={labelS}>Ultraschallgeräte (Anzahl)</label>
-            <input type="number" min={1} max={5} value={groupOverrides['arzt-sono']?.deviceCount ?? 1}
-              onChange={e => updateGroupOverride('arzt-sono', { deviceCount: Number(e.target.value) })}
-              style={numInputS} />
-            <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.2rem' }}>
-              Serialisiert alle Sono-Untersuchungen
-            </div>
-          </div>
-          <div>
-            <label style={labelS}>Langzeit-EKG-Geräte (Anzahl)</label>
-            <input type="number" min={1} max={20} value={groupOverrides['langzeit-ekg']?.deviceCount ?? 4}
-              onChange={e => updateGroupOverride('langzeit-ekg', { deviceCount: Number(e.target.value) })}
-              style={numInputS} />
-          </div>
-          <div>
-            <label style={labelS}>Langzeit-RR-Geräte (Anzahl)</label>
-            <input type="number" min={1} max={20} value={groupOverrides['langzeit-rr']?.deviceCount ?? 4}
-              onChange={e => updateGroupOverride('langzeit-rr', { deviceCount: Number(e.target.value) })}
-              style={numInputS} />
-          </div>
-          <div>
-            <label style={labelS}>Ergometer (Anzahl)</label>
-            <input type="number" min={1} max={10} value={groupOverrides['ergometrie']?.deviceCount ?? 1}
-              onChange={e => updateGroupOverride('ergometrie', { deviceCount: Number(e.target.value) })}
               style={numInputS} />
           </div>
         </div>

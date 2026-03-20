@@ -42,6 +42,13 @@ export function Sidebar() {
           )
         })}
       </nav>
+      <div style={{
+        padding: '0.75rem 1rem', borderTop: '1px solid #334155',
+        fontSize: '0.62rem', color: '#475569', textAlign: 'center', lineHeight: 1.5,
+      }}>
+        © Dr. Jan Görtzen-Patin 2026<br />
+        All rights reserved. Internal use only.
+      </div>
     </aside>
   )
 }
