@@ -8,11 +8,8 @@ import { buildWeekSchedule, analyzeScheduleDay } from '@/lib/scheduler'
 // ---------------------------------------------------------------------------
 
 function computeRevenue(scenario: Scenario): { perPatient: number; monthly: number } {
-  const lzPct = (scenario.resourceConfig.scheduleConfig.lzPercent ?? 100) / 100
-  const lzGroupIds = new Set(['langzeit-ekg', 'langzeit-rr'])
   const perPatient = scenario.examinations.reduce((sum, exam) => {
-    const factor = lzGroupIds.has(exam.resourceGroupId) ? lzPct : 1
-    return sum + exam.revenueEur * factor
+    return sum + exam.revenueEur * ((exam.participationPercent ?? 100) / 100)
   }, 0)
   const weekly = scenario.results?.weeklyThroughput ?? 0
   return { perPatient: Math.round(perPatient), monthly: Math.round(perPatient * weekly * 4) }

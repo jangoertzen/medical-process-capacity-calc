@@ -62,14 +62,11 @@ export default function Dashboard() {
     return { byAbsDay, worstWaitGroupName: worstWaitGroup?.name ?? '—', worstWaitMin: worstWait?.[1] ?? 0, avgWaitPerPatient }
   }, [activeScenario, results, nPatients])
 
-  // Revenue calculation: sum per-patient revenue, account for lzPercent on LZ exams
+  // Revenue calculation: sum per-patient revenue scaled by each exam's participationPercent
   const revenuePerPatient = useMemo(() => {
     if (!activeScenario) return 0
-    const lzPct = (activeScenario.resourceConfig.scheduleConfig.lzPercent ?? 100) / 100
-    const lzGroupIds = new Set(['langzeit-ekg', 'langzeit-rr'])
     return activeScenario.examinations.reduce((sum, exam) => {
-      const factor = lzGroupIds.has(exam.resourceGroupId) ? lzPct : 1
-      return sum + exam.revenueEur * factor
+      return sum + exam.revenueEur * ((exam.participationPercent ?? 100) / 100)
     }, 0)
   }, [activeScenario])
 
@@ -113,25 +110,40 @@ export default function Dashboard() {
         seenLz.done = true
         groupId = 'langzeit'
         label = 'Langzeit-Geräte (EKG + RR)'
-        const ekgCount = (resourceConfig.groupOverrides['langzeit-ekg']?.deviceCount ?? resourceGroups.find(g => g.id === 'langzeit-ekg')?.slotsPerDay ?? 4) + 1
-        const rrCount = (resourceConfig.groupOverrides['langzeit-rr']?.deviceCount ?? resourceGroups.find(g => g.id === 'langzeit-rr')?.slotsPerDay ?? 4) + 1
-        modConfig = {
-          ...resourceConfig,
-          groupOverrides: {
-            ...resourceConfig.groupOverrides,
-            'langzeit-ekg': { ...resourceConfig.groupOverrides['langzeit-ekg'], deviceCount: ekgCount },
-            'langzeit-rr': { ...resourceConfig.groupOverrides['langzeit-rr'], deviceCount: rrCount },
-          },
+        const ekgCount = (resourceGroups.find(g => g.id === 'langzeit-ekg')?.deviceCount ?? 4) + 1
+        const rrCount = (resourceGroups.find(g => g.id === 'langzeit-rr')?.deviceCount ?? 4) + 1
+        const modGroups = resourceGroups.map(g =>
+          g.id === 'langzeit-ekg' ? { ...g, deviceCount: ekgCount }
+          : g.id === 'langzeit-rr' ? { ...g, deviceCount: rrCount }
+          : g
+        )
+        const newTP = computeQuickThroughput(examinations, modGroups, modConfig)
+        const delta = newTP - results.weeklyThroughput
+        let limitingCap = Infinity
+        for (const wd of results.weekdayResults) {
+          for (const r of wd.resourceResults) {
+            if ((r.resourceGroupId === 'langzeit-ekg' || r.resourceGroupId === 'langzeit-rr') && r.limitingCapacity < limitingCap) {
+              limitingCap = r.limitingCapacity
+            }
+          }
         }
+        allDeltas.push({ groupId, groupName: label, delta, limitingCapacity: limitingCap === Infinity ? 0 : limitingCap })
+        continue
       } else {
-        const currentCount = resourceConfig.groupOverrides[group.id]?.deviceCount ?? (group.groupType === 'device_count' ? group.slotsPerDay : 1)
-        modConfig = {
-          ...resourceConfig,
-          groupOverrides: {
-            ...resourceConfig.groupOverrides,
-            [group.id]: { ...resourceConfig.groupOverrides[group.id], deviceCount: currentCount + 1 },
-          },
+        const currentCount = group.deviceCount ?? (group.groupType === 'device_count' ? group.slotsPerDay : 1)
+        const modGroups = resourceGroups.map(g => g.id === group.id ? { ...g, deviceCount: currentCount + 1 } : g)
+        const newTP = computeQuickThroughput(examinations, modGroups, modConfig)
+        const delta = newTP - results.weeklyThroughput
+        let limitingCap = Infinity
+        for (const wd of results.weekdayResults) {
+          for (const r of wd.resourceResults) {
+            if (r.resourceGroupId === group.id && r.limitingCapacity < limitingCap) {
+              limitingCap = r.limitingCapacity
+            }
+          }
         }
+        allDeltas.push({ groupId, groupName: label, delta, limitingCapacity: limitingCap === Infinity ? 0 : limitingCap })
+        continue
       }
 
       const newTP = computeQuickThroughput(examinations, resourceGroups, modConfig)
@@ -229,30 +241,6 @@ export default function Dashboard() {
         <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap', alignItems: 'flex-start' }}>
           <div>
             <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.4rem', fontWeight: 500 }}>
-              Programmtage
-            </div>
-            <div style={{ display: 'flex', gap: '0.4rem' }}>
-              {([2, 3] as const).map(d => {
-                const active = (schedule.programDays ?? 3) === d
-                return (
-                  <button key={d} onClick={() => updateScheduleConfig({ programDays: d })} style={{
-                    padding: '0.3rem 0.65rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem',
-                    border: `1px solid ${active ? '#3b82f6' : '#cbd5e1'}`,
-                    background: active ? '#eff6ff' : '#f8fafc',
-                    color: active ? '#1d4ed8' : '#94a3b8',
-                    fontWeight: active ? 700 : 400,
-                  }}>
-                    {d} Tage
-                  </button>
-                )
-              })}
-            </div>
-            <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.3rem' }}>
-              Bei 2 Tagen werden SD-Sono und Abschlussgespräch an Tag 2 durchgeführt.
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.4rem', fontWeight: 500 }}>
               Kohortenstart-Wochentage
             </div>
             <div style={{ display: 'flex', gap: '0.4rem' }}>
@@ -310,22 +298,6 @@ export default function Dashboard() {
             </div>
             <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.3rem' }}>
               Automatisch optimiert. Gerät wird am Folgetag zurückgegeben.{(schedule.programDays ?? 3) === 3 && ' Tag 3 ist ausgeschlossen.'}
-            </div>
-          </div>
-
-          <div>
-            <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.4rem', fontWeight: 500 }}>
-              Langzeit-Anteil
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <input type="range" min={0} max={100} step={5}
-                value={schedule.lzPercent ?? 100}
-                onChange={e => updateScheduleConfig({ lzPercent: Number(e.target.value) })}
-                style={{ width: '120px', accentColor: '#3b82f6' }} />
-              <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{schedule.lzPercent ?? 100}%</span>
-            </div>
-            <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.3rem' }}>
-              Anteil der Patienten mit Langzeit-EKG/-RR.
             </div>
           </div>
 

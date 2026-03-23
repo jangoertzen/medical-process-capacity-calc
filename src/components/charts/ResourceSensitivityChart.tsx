@@ -3,33 +3,27 @@ import {
   AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid,
   ResponsiveContainer, ReferenceLine,
 } from 'recharts'
-import type { Examination, ResourceGroup, ResourceConfig } from '@/types'
-import { computeQuickThroughput } from '@/lib/calculator'
 
 export interface SensitivityParam {
   id: string
   label: string
   xLabel: string
   currentCount: number
-  makeConfig: (n: number) => ResourceConfig
+  /** Returns weekly throughput for a given resource count */
+  compute: (n: number) => number
 }
 
 interface Props {
   param: SensitivityParam
-  examinations: Examination[]
-  resourceGroups: ResourceGroup[]
 }
 
-export function ResourceSensitivityChart({ param, examinations, resourceGroups }: Props) {
+export function ResourceSensitivityChart({ param }: Props) {
   const { data, delta, saturation } = useMemo(() => {
     const max = Math.max(10, param.currentCount + 4)
     const data: { count: number; throughput: number }[] = []
 
     for (let n = 1; n <= max; n++) {
-      const modConfig = param.makeConfig(n)
-      const throughput = computeQuickThroughput(
-        examinations, resourceGroups, modConfig,
-      )
+      const throughput = param.compute(n)
       data.push({ count: n, throughput })
     }
 
@@ -45,7 +39,7 @@ export function ResourceSensitivityChart({ param, examinations, resourceGroups }
     }
 
     return { data, delta, saturation }
-  }, [param, examinations, resourceGroups])
+  }, [param])
 
   const currentTP = data.find(d => d.count === param.currentCount)?.throughput ?? 0
   const isBottleneck = delta > 0

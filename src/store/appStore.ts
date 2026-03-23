@@ -6,12 +6,14 @@ import type {
   Scenario,
   Examination,
   ResourceConfig,
+  ResourceGroup,
   AppPage,
   Weekday,
   StaffConfig,
-  GroupOverride,
   WeeklyCapacityResult,
   ScheduleConfig,
+  DayNumber,
+  TimeInterval,
 } from '@/types';
 import { defaultExaminations, defaultResourceGroups, defaultResourceConfig } from '@/data/defaultData';
 import { calculateCapacity } from '@/lib/calculator';
@@ -42,10 +44,17 @@ interface AppState {
   setActiveScenario: (id: string) => void;
 
   updateExamination: (examId: string, patch: Partial<Examination>) => void;
-  updateOpeningHours: (weekday: Weekday, minutes: number) => void;
+  addExamination: (patch: Omit<Examination, 'id'>) => void;
+  deleteExamination: (examId: string) => void;
+  reorderExaminationsForDay: (day: DayNumber, orderedIds: string[]) => void;
+
+  updateOpeningHours: (weekday: Weekday, intervals: TimeInterval[]) => void;
   updateStaff: (patch: Partial<StaffConfig>) => void;
-  updateGroupOverride: (groupId: string, patch: GroupOverride) => void;
   updateScheduleConfig: (patch: Partial<ScheduleConfig>) => void;
+
+  updateResourceGroup: (groupId: string, patch: Partial<ResourceGroup>) => void;
+  addResourceGroup: (group: Omit<ResourceGroup, 'id'>) => void;
+  deleteResourceGroup: (groupId: string) => void;
 
   createScenario: (name: string, baseId?: string) => void;
   deleteScenario: (id: string) => void;
@@ -102,10 +111,51 @@ export const useAppStore = create<AppState>()(
         scenario.results = calculateCapacity(scenario.examinations, scenario.resourceGroups, scenario.resourceConfig);
       }),
 
-      updateOpeningHours: (weekday, minutes) => set(state => {
+      addExamination: (patch) => set(state => {
         const scenario = state.scenarios.find(s => s.id === state.activeScenarioId);
         if (!scenario) return;
-        scenario.resourceConfig.openingHours[weekday] = minutes;
+        const newId = `exam-${Date.now()}`;
+        const newExam: Examination = { id: newId, ...patch };
+        scenario.examinations.push(newExam);
+        // Add to resource group's examinationIds
+        const group = scenario.resourceGroups.find(g => g.id === patch.resourceGroupId);
+        if (group && !group.examinationIds.includes(newId)) {
+          group.examinationIds.push(newId);
+        }
+        scenario.results = calculateCapacity(scenario.examinations, scenario.resourceGroups, scenario.resourceConfig);
+      }),
+
+      deleteExamination: (examId) => set(state => {
+        const scenario = state.scenarios.find(s => s.id === state.activeScenarioId);
+        if (!scenario) return;
+        scenario.examinations = scenario.examinations.filter(e => e.id !== examId);
+        // Remove from all resource groups
+        for (const group of scenario.resourceGroups) {
+          group.examinationIds = group.examinationIds.filter(id => id !== examId);
+        }
+        // Clear any mustFollowExamId references to this exam
+        for (const exam of scenario.examinations) {
+          if (exam.mustFollowExamId === examId) {
+            exam.mustFollowExamId = null;
+          }
+        }
+        scenario.results = calculateCapacity(scenario.examinations, scenario.resourceGroups, scenario.resourceConfig);
+      }),
+
+      reorderExaminationsForDay: (day, orderedIds) => set(state => {
+        const scenario = state.scenarios.find(s => s.id === state.activeScenarioId);
+        if (!scenario) return;
+        orderedIds.forEach((id, index) => {
+          const exam = scenario.examinations.find(e => e.id === id);
+          if (exam) exam.order = index + 1;
+        });
+        // No recalculation needed — order doesn't affect capacity
+      }),
+
+      updateOpeningHours: (weekday, intervals) => set(state => {
+        const scenario = state.scenarios.find(s => s.id === state.activeScenarioId);
+        if (!scenario) return;
+        scenario.resourceConfig.openingHours[weekday] = intervals;
         scenario.results = calculateCapacity(scenario.examinations, scenario.resourceGroups, scenario.resourceConfig);
       }),
 
@@ -116,18 +166,36 @@ export const useAppStore = create<AppState>()(
         scenario.results = calculateCapacity(scenario.examinations, scenario.resourceGroups, scenario.resourceConfig);
       }),
 
-      updateGroupOverride: (groupId, patch) => set(state => {
-        const scenario = state.scenarios.find(s => s.id === state.activeScenarioId);
-        if (!scenario) return;
-        const current = scenario.resourceConfig.groupOverrides[groupId] ?? {};
-        scenario.resourceConfig.groupOverrides[groupId] = { ...current, ...patch };
-        scenario.results = calculateCapacity(scenario.examinations, scenario.resourceGroups, scenario.resourceConfig);
-      }),
-
       updateScheduleConfig: (patch) => set(state => {
         const scenario = state.scenarios.find(s => s.id === state.activeScenarioId);
         if (!scenario) return;
         Object.assign(scenario.resourceConfig.scheduleConfig, patch);
+        scenario.results = calculateCapacity(scenario.examinations, scenario.resourceGroups, scenario.resourceConfig);
+      }),
+
+      updateResourceGroup: (groupId, patch) => set(state => {
+        const scenario = state.scenarios.find(s => s.id === state.activeScenarioId);
+        if (!scenario) return;
+        const group = scenario.resourceGroups.find(g => g.id === groupId);
+        if (!group) return;
+        Object.assign(group, patch);
+        scenario.results = calculateCapacity(scenario.examinations, scenario.resourceGroups, scenario.resourceConfig);
+      }),
+
+      addResourceGroup: (group) => set(state => {
+        const scenario = state.scenarios.find(s => s.id === state.activeScenarioId);
+        if (!scenario) return;
+        const newId = `group-${Date.now()}`;
+        scenario.resourceGroups.push({ id: newId, ...group });
+        scenario.results = calculateCapacity(scenario.examinations, scenario.resourceGroups, scenario.resourceConfig);
+      }),
+
+      deleteResourceGroup: (groupId) => set(state => {
+        const scenario = state.scenarios.find(s => s.id === state.activeScenarioId);
+        if (!scenario) return;
+        const group = scenario.resourceGroups.find(g => g.id === groupId);
+        if (!group || group.examinationIds.length > 0) return; // Cannot delete if exams assigned
+        scenario.resourceGroups = scenario.resourceGroups.filter(g => g.id !== groupId);
         scenario.results = calculateCapacity(scenario.examinations, scenario.resourceGroups, scenario.resourceConfig);
       }),
 
@@ -167,7 +235,7 @@ export const useAppStore = create<AppState>()(
       }),
     })),
     {
-      name: 'process-calc-v15',
+      name: 'process-calc-v18',
       partialize: (state) => ({
         scenarios: state.scenarios,
         activeScenarioId: state.activeScenarioId,
