@@ -1,5 +1,20 @@
 import { useAppStore } from '@/store/appStore'
-import type { Weekday } from '@/types'
+import type { TimeInterval, Weekday } from '@/types'
+
+function toTimeStr(min: number): string {
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
+function fromTimeStr(str: string): number {
+  const [h, m] = str.split(':').map(Number)
+  return (h || 0) * 60 + (m || 0)
+}
+
+function totalMin(intervals: TimeInterval[]): number {
+  return intervals.reduce((s, iv) => s + Math.max(0, iv.endMin - iv.startMin), 0)
+}
 
 const WEEKDAYS: Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
 const WD_LABELS: Record<Weekday, string> = { Mon: 'Montag', Tue: 'Dienstag', Wed: 'Mittwoch', Thu: 'Donnerstag', Fri: 'Freitag' }
@@ -12,6 +27,24 @@ export default function Ressourcen() {
 
   if (!activeScenario) return null
   const { openingHours, staff, scheduleConfig } = activeScenario.resourceConfig
+
+  const setInterval = (wd: Weekday, idx: number, patch: Partial<TimeInterval>) => {
+    const intervals = openingHours[wd].map((iv, i) => i === idx ? { ...iv, ...patch } : iv)
+    updateOpeningHours(wd, intervals)
+  }
+
+  const addInterval = (wd: Weekday) => {
+    const existing = openingHours[wd]
+    const lastEnd = existing.length > 0 ? existing[existing.length - 1].endMin : 480
+    const start = Math.min(lastEnd + 60, 1380) // default: 1h after last end, max 23:00
+    const end = Math.min(start + 120, 1440)
+    updateOpeningHours(wd, [...existing, { startMin: start, endMin: end }])
+  }
+
+  const removeInterval = (wd: Weekday, idx: number) => {
+    const intervals = openingHours[wd].filter((_, i) => i !== idx)
+    updateOpeningHours(wd, intervals)
+  }
 
   const toggleStartDay = (wd: Weekday) => {
     const next = scheduleConfig.startDays.includes(wd)
@@ -38,20 +71,64 @@ export default function Ressourcen() {
       </div>
 
       <Card title="Öffnungszeiten">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '0.75rem' }}>
-          {WEEKDAYS.map(wd => (
-            <div key={wd}>
-              <label style={labelS}>{WD_LABELS[wd]}</label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                <input type="number" min={0} max={12} step={0.5}
-                  value={openingHours[wd] / 60}
-                  onChange={e => updateOpeningHours(wd, Math.round(parseFloat(e.target.value) * 60))}
-                  style={{ ...numInputS, width: '60px' }} />
-                <span style={{ fontSize: '0.8rem', color: '#64748b' }}>h</span>
-                <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>({openingHours[wd]} min)</span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          {WEEKDAYS.map(wd => {
+            const intervals = openingHours[wd] ?? []
+            const total = totalMin(intervals)
+            return (
+              <div key={wd} style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
+                {/* Day label */}
+                <div style={{ width: '90px', flexShrink: 0, paddingTop: '0.3rem' }}>
+                  <span style={{ fontWeight: 600, fontSize: '0.85rem', color: '#1e293b' }}>{WD_LABELS[wd]}</span>
+                  <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.1rem' }}>
+                    {total > 0 ? `${Math.floor(total / 60)}h ${total % 60 > 0 ? `${total % 60}min` : ''}`.trim() : '—'}
+                  </div>
+                </div>
+
+                {/* Intervals */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', flex: 1 }}>
+                  {intervals.length === 0 && (
+                    <span style={{ fontSize: '0.8rem', color: '#cbd5e1', paddingTop: '0.3rem' }}>Kein Zeitraum</span>
+                  )}
+                  {intervals.map((iv, idx) => (
+                    <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <input
+                        type="time"
+                        value={toTimeStr(iv.startMin)}
+                        onChange={e => setInterval(wd, idx, { startMin: fromTimeStr(e.target.value) })}
+                        style={timeInputS}
+                      />
+                      <span style={{ color: '#94a3b8', fontSize: '0.85rem' }}>–</span>
+                      <input
+                        type="time"
+                        value={toTimeStr(iv.endMin)}
+                        onChange={e => setInterval(wd, idx, { endMin: fromTimeStr(e.target.value) })}
+                        style={timeInputS}
+                      />
+                      <span style={{ fontSize: '0.72rem', color: '#94a3b8', minWidth: '36px' }}>
+                        {Math.max(0, iv.endMin - iv.startMin)}min
+                      </span>
+                      {intervals.length > 1 && (
+                        <button
+                          onClick={() => removeInterval(wd, idx)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#f87171', fontSize: '0.8rem', padding: '0 0.1rem' }}
+                          title="Zeitraum entfernen"
+                        >✕</button>
+                      )}
+                    </div>
+                  ))}
+                  <button
+                    onClick={() => addInterval(wd)}
+                    style={{
+                      alignSelf: 'flex-start', background: 'none', border: '1px dashed #cbd5e1',
+                      borderRadius: '4px', color: '#64748b', cursor: 'pointer',
+                      fontSize: '0.75rem', padding: '0.15rem 0.5rem', marginTop: '0.1rem',
+                    }}
+                  >+ Zeitraum</button>
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </Card>
 
@@ -119,32 +196,6 @@ export default function Ressourcen() {
             </div>
           </div>
           <div>
-            <label style={labelS}>Langzeit-Anteil (% der Patienten)</label>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.25rem' }}>
-              <input type="range" min={0} max={100} step={5}
-                value={scheduleConfig.lzPercent ?? 100}
-                onChange={e => updateScheduleConfig({ lzPercent: Number(e.target.value) })}
-                style={{ width: '160px', accentColor: '#3b82f6' }} />
-              <span style={{ fontWeight: 700, fontSize: '0.9rem', minWidth: '40px' }}>{scheduleConfig.lzPercent ?? 100}%</span>
-            </div>
-            <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.3rem' }}>
-              Anteil der Patienten, die Langzeit-EKG und Langzeit-RR erhalten.
-            </div>
-          </div>
-          <div>
-            <label style={labelS}>Ergometrie-Anteil (% der Patienten)</label>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.25rem' }}>
-              <input type="range" min={0} max={100} step={5}
-                value={scheduleConfig.ergoPercent ?? 100}
-                onChange={e => updateScheduleConfig({ ergoPercent: Number(e.target.value) })}
-                style={{ width: '160px', accentColor: '#3b82f6' }} />
-              <span style={{ fontWeight: 700, fontSize: '0.9rem', minWidth: '40px' }}>{scheduleConfig.ergoPercent ?? 100}%</span>
-            </div>
-            <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.3rem' }}>
-              Anteil der Patienten, die eine Fahrradergometrie erhalten.
-            </div>
-          </div>
-          <div>
             <label style={labelS}>Max. Aufenthalt pro Besuchstag</label>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.25rem' }}>
               <input type="range" min={30} max={480} step={15}
@@ -186,3 +237,4 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 
 const labelS: React.CSSProperties = { fontSize: '0.8rem', fontWeight: 500, color: '#475569', display: 'block', marginBottom: '0.25rem' }
 const numInputS: React.CSSProperties = { padding: '0.3rem 0.5rem', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '0.875rem', color: '#1e293b', width: '80px' }
+const timeInputS: React.CSSProperties = { padding: '0.25rem 0.4rem', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '0.85rem', color: '#1e293b', width: '92px' }

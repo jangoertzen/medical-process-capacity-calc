@@ -50,6 +50,7 @@ function AddExamModal({ day, resourceGroups, allExams, onClose, onAdd }: AddExam
   const [revenueEur, setRevenueEur] = useState(0)
   const [parallelWith, setParallelWith] = useState<string | null>(null)
   const [mustFollowExamId, setMustFollowExamId] = useState<string | null>(null)
+  const [participationPercent, setParticipationPercent] = useState(100)
 
   const maxOrder = allExams.filter(e => e.day === selectedDay).reduce((m, e) => Math.max(m, e.order), 0)
 
@@ -66,6 +67,7 @@ function AddExamModal({ day, resourceGroups, allExams, onClose, onAdd }: AddExam
       revenueEur,
       order: maxOrder + 1,
       mustFollowExamId,
+      participationPercent,
     })
     onClose()
   }
@@ -123,6 +125,14 @@ function AddExamModal({ day, resourceGroups, allExams, onClose, onAdd }: AddExam
               <option value="">— keine —</option>
               {allExams.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
             </select>
+          </FormRow>
+          <FormRow label="Patientenanteil">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <input type="range" min={0} max={100} step={5} value={participationPercent}
+                onChange={e => setParticipationPercent(Number(e.target.value))}
+                style={{ width: '100px', accentColor: '#3b82f6' }} />
+              <span style={{ fontWeight: 700, fontSize: '0.85rem', minWidth: '36px' }}>{participationPercent}%</span>
+            </div>
           </FormRow>
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1.25rem' }}>
@@ -206,6 +216,9 @@ function ExamCard({ exam, resourceGroups, allExams, isDragging = false, isOverla
             color: exam.staffRole === 'Arzt' ? '#b91c1c' : '#1d4ed8',
           }}>{exam.staffRole}</span>
           <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{exam.durationMin}min</span>
+          {(exam.participationPercent ?? 100) < 100 && (
+            <span style={{ fontSize: '0.7rem', fontWeight: 600, color: '#f97316' }}>{exam.participationPercent}%</span>
+          )}
           {exam.revenueEur > 0 && (
             <span style={{ fontSize: '0.72rem', color: '#16a34a' }}>{exam.revenueEur}€</span>
           )}
@@ -252,6 +265,18 @@ function ExamCard({ exam, resourceGroups, allExams, isDragging = false, isOverla
                 <input type="number" min={1} max={120} value={exam.durationMin}
                   onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) updateExamination(exam.id, { durationMin: v }) }}
                   style={{ width: '52px', ...inputS }} />
+              </div>
+            </FormRow>
+            <FormRow label="Patientenanteil">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <input type="range" min={0} max={100} step={5}
+                  value={exam.participationPercent ?? 100}
+                  onChange={e => updateExamination(exam.id, { participationPercent: Number(e.target.value) })}
+                  style={{ width: '100px', accentColor: exam.participationPercent < 100 ? '#f97316' : '#3b82f6' }} />
+                <span style={{
+                  fontWeight: 700, fontSize: '0.85rem', minWidth: '36px',
+                  color: (exam.participationPercent ?? 100) < 100 ? '#f97316' : '#1e293b',
+                }}>{exam.participationPercent ?? 100}%</span>
               </div>
             </FormRow>
             <FormRow label="Umsatz (€)">

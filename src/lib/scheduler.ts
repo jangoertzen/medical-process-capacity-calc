@@ -1,4 +1,5 @@
 import type { Examination, ResourceGroup, ResourceConfig, DayNumber, Weekday } from '@/types';
+import { getTotalOpeningMinutes } from './calculator';
 
 const WEEKDAY_ORDER: Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 
@@ -173,7 +174,7 @@ export function buildWeekSchedule(
   for (let absDay = 0; absDay <= 14; absDay++) {
     const weekday = WEEKDAY_ORDER[absDay % 5];
     const week = (Math.floor(absDay / 5) + 1) as 1 | 2 | 3;
-    const openingMinutes = config.openingHours[weekday];
+    const openingMinutes = getTotalOpeningMinutes(config.openingHours[weekday]);
 
     const activeStages: DayNumber[] = [];
 
@@ -226,10 +227,13 @@ function scheduleDay(
   config: ResourceConfig,
   nPatients: number,
 ): ScheduledExam[] {
-  const lzPercent = config.scheduleConfig.lzPercent ?? 100;
-  const ergoPercent = config.scheduleConfig.ergoPercent ?? 100;
-  const nLzPatients = Math.round(nPatients * lzPercent / 100);
-  const nErgoPatients = Math.round(nPatients * ergoPercent / 100);
+  // Derive participation rates from per-exam participationPercent
+  const lzAnlegenExam = examinations.find(e => isLzAnlegen(e));
+  const ergoExam = examinations.find(e => e.resourceGroupId === 'ergometrie');
+  const lzParticipation = (lzAnlegenExam?.participationPercent ?? 100) / 100;
+  const ergoParticipation = (ergoExam?.participationPercent ?? 100) / 100;
+  const nLzPatients = Math.round(nPatients * lzParticipation);
+  const nErgoPatients = Math.round(nPatients * ergoParticipation);
 
   // Shared resource slots across all patient groups
   const resourceSlots = new Map<string, number[]>();

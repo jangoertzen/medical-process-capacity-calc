@@ -2,23 +2,23 @@ import type { Examination, ResourceGroup, ResourceConfig } from '@/types';
 
 export const defaultExaminations: Examination[] = [
   // Day 1
-  { id: 'e01', day: 1, order: 1, name: 'Blutabnahme', room: 'Labor', staffRole: 'MFA', durationMin: 5, parallelWith: null, resourceGroupId: 'mfa-kapazitat', revenueEur: 25, mustFollowExamId: null },
-  { id: 'e02', day: 1, order: 2, name: 'EKG', room: 'Funktionsraum', staffRole: 'MFA', durationMin: 10, parallelWith: 'ABI-Messung', resourceGroupId: 'funktionsraum-tag1', revenueEur: 20, mustFollowExamId: null },
-  { id: 'e03', day: 1, order: 3, name: 'ABI-Messung', room: 'Funktionsraum', staffRole: 'MFA', durationMin: 10, parallelWith: 'EKG', resourceGroupId: 'funktionsraum-tag1', revenueEur: 15, mustFollowExamId: null },
-  { id: 'e04', day: 1, order: 4, name: 'Lungenfunktion', room: 'Funktionsraum', staffRole: 'MFA', durationMin: 5, parallelWith: null, resourceGroupId: 'funktionsraum-tag1', revenueEur: 25, mustFollowExamId: null },
-  { id: 'e05', day: 1, order: 5, name: 'Abdomen-Sonographie', room: 'Sono', staffRole: 'Arzt', durationMin: 15, parallelWith: 'Körperliche Untersuchung', resourceGroupId: 'arzt-sono', revenueEur: 60, mustFollowExamId: null },
-  { id: 'e06', day: 1, order: 6, name: 'Körperliche Untersuchung', room: 'Sprechzimmer', staffRole: 'Arzt', durationMin: 5, parallelWith: 'Abdomen-Sonographie', resourceGroupId: 'arzt-sprechzeit', revenueEur: 30, mustFollowExamId: null },
-  { id: 'e07', day: 1, order: 7, name: 'Langzeit-EKG anlegen', room: 'Geräteraum', staffRole: 'MFA', durationMin: 5, parallelWith: 'Langzeit-Blutdruck anlegen', resourceGroupId: 'langzeit-ekg', revenueEur: 50, mustFollowExamId: null },
-  { id: 'e08', day: 1, order: 8, name: 'Langzeit-Blutdruck anlegen', room: 'Geräteraum', staffRole: 'MFA', durationMin: 5, parallelWith: 'Langzeit-EKG anlegen', resourceGroupId: 'langzeit-rr', revenueEur: 30, mustFollowExamId: null },
+  { id: 'e01', day: 1, order: 1, name: 'Blutabnahme', room: 'Labor', staffRole: 'MFA', durationMin: 5, parallelWith: null, resourceGroupId: 'mfa-kapazitat', revenueEur: 25, mustFollowExamId: null, participationPercent: 100 },
+  { id: 'e02', day: 1, order: 2, name: 'EKG', room: 'Funktionsraum', staffRole: 'MFA', durationMin: 10, parallelWith: 'ABI-Messung', resourceGroupId: 'funktionsraum-tag1', revenueEur: 20, mustFollowExamId: null, participationPercent: 100 },
+  { id: 'e03', day: 1, order: 3, name: 'ABI-Messung', room: 'Funktionsraum', staffRole: 'MFA', durationMin: 10, parallelWith: 'EKG', resourceGroupId: 'funktionsraum-tag1', revenueEur: 15, mustFollowExamId: null, participationPercent: 100 },
+  { id: 'e04', day: 1, order: 4, name: 'Lungenfunktion', room: 'Funktionsraum', staffRole: 'MFA', durationMin: 5, parallelWith: null, resourceGroupId: 'funktionsraum-tag1', revenueEur: 25, mustFollowExamId: null, participationPercent: 100 },
+  { id: 'e05', day: 1, order: 5, name: 'Abdomen-Sonographie', room: 'Sono', staffRole: 'Arzt', durationMin: 15, parallelWith: 'Körperliche Untersuchung', resourceGroupId: 'arzt-sono', revenueEur: 60, mustFollowExamId: null, participationPercent: 100 },
+  { id: 'e06', day: 1, order: 6, name: 'Körperliche Untersuchung', room: 'Sprechzimmer', staffRole: 'Arzt', durationMin: 5, parallelWith: 'Abdomen-Sonographie', resourceGroupId: 'arzt-sprechzeit', revenueEur: 30, mustFollowExamId: null, participationPercent: 100 },
+  { id: 'e07', day: 1, order: 7, name: 'Langzeit-EKG anlegen', room: 'Geräteraum', staffRole: 'MFA', durationMin: 5, parallelWith: 'Langzeit-Blutdruck anlegen', resourceGroupId: 'langzeit-ekg', revenueEur: 50, mustFollowExamId: null, participationPercent: 100 },
+  { id: 'e08', day: 1, order: 8, name: 'Langzeit-Blutdruck anlegen', room: 'Geräteraum', staffRole: 'MFA', durationMin: 5, parallelWith: 'Langzeit-EKG anlegen', resourceGroupId: 'langzeit-rr', revenueEur: 30, mustFollowExamId: null, participationPercent: 100 },
   // Day 2
-  { id: 'e09', day: 2, order: 1, name: 'Langzeit-EKG abnehmen', room: 'Geräteraum', staffRole: 'MFA', durationMin: 2, parallelWith: 'Langzeit-Blutdruck abnehmen', resourceGroupId: 'langzeit-ekg', revenueEur: 0, mustFollowExamId: null },
-  { id: 'e10', day: 2, order: 2, name: 'Langzeit-Blutdruck abnehmen', room: 'Geräteraum', staffRole: 'MFA', durationMin: 2, parallelWith: 'Langzeit-EKG abnehmen', resourceGroupId: 'langzeit-rr', revenueEur: 0, mustFollowExamId: null },
-  { id: 'e12', day: 2, order: 3, name: 'Echokardiographie', room: 'Sono', staffRole: 'Arzt', durationMin: 15, parallelWith: 'Duplex hirnversorgende Gefäße', resourceGroupId: 'arzt-sono', revenueEur: 80, mustFollowExamId: null },
-  { id: 'e13', day: 2, order: 4, name: 'Duplex hirnversorgende Gefäße', room: 'Sono', staffRole: 'Arzt', durationMin: 15, parallelWith: 'Echokardiographie', resourceGroupId: 'arzt-sono', revenueEur: 60, mustFollowExamId: null },
-  { id: 'e11', day: 2, order: 5, name: 'Fahrradergometrie', room: 'Ergometrieraum', staffRole: 'MFA', durationMin: 20, parallelWith: null, resourceGroupId: 'ergometrie', revenueEur: 40, mustFollowExamId: 'e12' },
+  { id: 'e09', day: 2, order: 1, name: 'Langzeit-EKG abnehmen', room: 'Geräteraum', staffRole: 'MFA', durationMin: 2, parallelWith: 'Langzeit-Blutdruck abnehmen', resourceGroupId: 'langzeit-ekg', revenueEur: 0, mustFollowExamId: null, participationPercent: 100 },
+  { id: 'e10', day: 2, order: 2, name: 'Langzeit-Blutdruck abnehmen', room: 'Geräteraum', staffRole: 'MFA', durationMin: 2, parallelWith: 'Langzeit-EKG abnehmen', resourceGroupId: 'langzeit-rr', revenueEur: 0, mustFollowExamId: null, participationPercent: 100 },
+  { id: 'e12', day: 2, order: 3, name: 'Echokardiographie', room: 'Sono', staffRole: 'Arzt', durationMin: 15, parallelWith: 'Duplex hirnversorgende Gefäße', resourceGroupId: 'arzt-sono', revenueEur: 80, mustFollowExamId: null, participationPercent: 100 },
+  { id: 'e13', day: 2, order: 4, name: 'Duplex hirnversorgende Gefäße', room: 'Sono', staffRole: 'Arzt', durationMin: 15, parallelWith: 'Echokardiographie', resourceGroupId: 'arzt-sono', revenueEur: 60, mustFollowExamId: null, participationPercent: 100 },
+  { id: 'e11', day: 2, order: 5, name: 'Fahrradergometrie', room: 'Ergometrieraum', staffRole: 'MFA', durationMin: 20, parallelWith: null, resourceGroupId: 'ergometrie', revenueEur: 40, mustFollowExamId: 'e12', participationPercent: 100 },
   // Day 3
-  { id: 'e14', day: 3, order: 1, name: 'Schilddrüsen-Sonographie', room: 'Sono', staffRole: 'Arzt', durationMin: 5, parallelWith: null, resourceGroupId: 'arzt-sono', revenueEur: 40, mustFollowExamId: null },
-  { id: 'e15', day: 3, order: 2, name: 'Abschlussgespräch', room: 'Sprechzimmer', staffRole: 'Arzt', durationMin: 10, parallelWith: null, resourceGroupId: 'arzt-sprechzeit', revenueEur: 50, mustFollowExamId: null },
+  { id: 'e14', day: 3, order: 1, name: 'Schilddrüsen-Sonographie', room: 'Sono', staffRole: 'Arzt', durationMin: 5, parallelWith: null, resourceGroupId: 'arzt-sono', revenueEur: 40, mustFollowExamId: null, participationPercent: 100 },
+  { id: 'e15', day: 3, order: 2, name: 'Abschlussgespräch', room: 'Sprechzimmer', staffRole: 'Arzt', durationMin: 10, parallelWith: null, resourceGroupId: 'arzt-sprechzeit', revenueEur: 50, mustFollowExamId: null, participationPercent: 100 },
 ];
 
 export const defaultResourceGroups: ResourceGroup[] = [
@@ -89,11 +89,16 @@ export const defaultResourceGroups: ResourceGroup[] = [
 
 export const defaultResourceConfig: ResourceConfig = {
   openingHours: {
-    Mon: 360,
-    Tue: 360,
-    Wed: 240,
-    Thu: 360,
-    Fri: 300,
+    // Mon: 8:00–14:00 = 360 min
+    Mon: [{ startMin: 480, endMin: 840 }],
+    // Tue: 8:00–14:00 = 360 min
+    Tue: [{ startMin: 480, endMin: 840 }],
+    // Wed: 8:00–12:00 = 240 min
+    Wed: [{ startMin: 480, endMin: 720 }],
+    // Thu: 8:00–14:00 = 360 min
+    Thu: [{ startMin: 480, endMin: 840 }],
+    // Fri: 8:00–13:00 = 300 min
+    Fri: [{ startMin: 480, endMin: 780 }],
   },
   staff: {
     doctorCount: 5,
@@ -109,10 +114,6 @@ export const defaultResourceConfig: ResourceConfig = {
     lzAnlegenDay: 1,
     // 3-day program by default (Tag 1, 2, 3)
     programDays: 3,
-    // 100% of patients receive Langzeit measurements by default
-    lzPercent: 100,
-    // 100% of patients receive Ergometrie by default
-    ergoPercent: 100,
     // Maximum patient stay per visit day: 2 hours
     maxStayMinutes: 120,
     // No break between exams by default

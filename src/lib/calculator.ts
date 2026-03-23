@@ -9,8 +9,14 @@ import type {
   BottleneckSummary,
   DayNumber,
   Weekday,
+  TimeInterval,
 } from '@/types';
 import { buildWeekSchedule } from './scheduler';
+
+/** Sum of all open interval durations for a day */
+export function getTotalOpeningMinutes(intervals: TimeInterval[]): number {
+  return intervals.reduce((sum, iv) => sum + Math.max(0, iv.endMin - iv.startMin), 0);
+}
 
 const WEEKDAY_ORDER: Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 
@@ -113,6 +119,7 @@ function isLzAbnehmen(exam: Examination): boolean {
  * LZ anlegen exams are attributed to the effective lzAnlegenDay stage
  * (not necessarily their static exam.day), and LZ abnehmen exams are
  * excluded entirely (no device return scheduling).
+ * Per-exam participationPercent is used for scaling.
  */
 function timeForGroupAndStage(
   group: ResourceGroup,
@@ -120,8 +127,6 @@ function timeForGroupAndStage(
   examinations: Examination[],
   allSteps: Step[],
   lzAnlegenDay: 1 | 2,
-  lzPercent: number = 100,
-  ergoPercent: number = 100,
 ): number {
   const stageExamIds = new Set(
     examinations.filter(e => {
@@ -139,23 +144,17 @@ function timeForGroupAndStage(
   );
   if (stageExamIds.size === 0) return 0;
 
-  // Identify LZ and Ergometrie exams for percentage scaling
-  const lzExamIds = new Set(
-    examinations.filter(e => isLzAnlegen(e) || isLzAbnehmen(e)).map(e => e.id),
-  );
-  const ergoExamIds = new Set(
-    examinations.filter(e => e.resourceGroupId === 'ergometrie').map(e => e.id),
-  );
-  const lzScale = lzPercent / 100;
-  const ergoScale = ergoPercent / 100;
+  const examById = new Map(examinations.map(e => [e.id, e]));
 
   return allSteps
     .filter(s => s.resourceGroupId === group.id && s.examinationIds.some(id => stageExamIds.has(id)))
     .reduce((sum, s) => {
-      const isLzStep = s.examinationIds.some(id => lzExamIds.has(id));
-      const isErgoStep = s.examinationIds.some(id => ergoExamIds.has(id));
-      const scale = isLzStep ? lzScale : isErgoStep ? ergoScale : 1;
-      return sum + s.durationMin * scale;
+      // Scale by average participationPercent of exams in this step
+      const stepExams = s.examinationIds.map(id => examById.get(id)).filter(Boolean) as Examination[];
+      const avgParticipation = stepExams.length > 0
+        ? stepExams.reduce((p, e) => p + (e.participationPercent ?? 100), 0) / stepExams.length
+        : 100;
+      return sum + s.durationMin * (avgParticipation / 100);
     }, 0);
 }
 
@@ -213,8 +212,6 @@ function computeDayResources(
   lzAnlegenDay: 1 | 2,
 ): ResourceCapacityResult[] {
   const { staff } = config;
-  const lzPercent = config.scheduleConfig.lzPercent ?? 100;
-  const ergoPercent = config.scheduleConfig.ergoPercent ?? 100;
   const resourceResults: ResourceCapacityResult[] = [];
 
   for (const group of resourceGroups) {
@@ -224,14 +221,15 @@ function computeDayResources(
     if (group.groupType === 'device_count') {
       if (!hasAnlegenStage) continue;
       const deviceCount = group.deviceCount ?? group.slotsPerDay;
-      if (lzPercent === 0) {
-        continue;
-      }
-      limitingCapacity = Math.floor(deviceCount / (lzPercent / 100));
+      // Use participationPercent from the anlegen exam in this group
+      const anlegenExam = examinations.find(e => group.examinationIds.includes(e.id) && isLzAnlegen(e));
+      const participation = (anlegenExam?.participationPercent ?? 100) / 100;
+      if (participation === 0) continue;
+      limitingCapacity = Math.floor(deviceCount / participation);
       timePerPatientMin = 0;
     } else {
       timePerPatientMin = activeStages.reduce(
-        (sum, stage) => sum + timeForGroupAndStage(group, stage, examinations, allSteps, lzAnlegenDay, lzPercent, ergoPercent),
+        (sum, stage) => sum + timeForGroupAndStage(group, stage, examinations, allSteps, lzAnlegenDay),
         0,
       );
       if (timePerPatientMin === 0) continue;
@@ -287,7 +285,7 @@ function computeAnalyticalCapacity(
 
   for (let absDay = 5; absDay <= 9; absDay++) {
     const weekday = WEEKDAY_ORDER[absDay % 5];
-    const openingMinutes = openingHours[weekday];
+    const openingMinutes = getTotalOpeningMinutes(openingHours[weekday]);
     const activeStages = activeStagesOnAbsDay(absDay, cohortStartAbsDays, visitDayOffsets, numVisits);
 
     if (activeStages.length === 0) continue;
@@ -427,7 +425,7 @@ export function calculateCapacity(
   for (let absDay = 0; absDay <= 14; absDay++) {
     const weekday = WEEKDAY_ORDER[absDay % 5];
     const week = (Math.floor(absDay / 5) + 1) as 1 | 2 | 3;
-    const openingMinutes = openingHours[weekday];
+    const openingMinutes = getTotalOpeningMinutes(openingHours[weekday]);
     const activeStages = activeStagesOnAbsDay(absDay, cohortStartAbsDays, bestVisitDayOffsets, numVisits);
 
     if (activeStages.length === 0) continue;

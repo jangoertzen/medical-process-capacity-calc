@@ -13,6 +13,7 @@ import type {
   WeeklyCapacityResult,
   ScheduleConfig,
   DayNumber,
+  TimeInterval,
 } from '@/types';
 import { defaultExaminations, defaultResourceGroups, defaultResourceConfig } from '@/data/defaultData';
 import { calculateCapacity } from '@/lib/calculator';
@@ -47,7 +48,7 @@ interface AppState {
   deleteExamination: (examId: string) => void;
   reorderExaminationsForDay: (day: DayNumber, orderedIds: string[]) => void;
 
-  updateOpeningHours: (weekday: Weekday, minutes: number) => void;
+  updateOpeningHours: (weekday: Weekday, intervals: TimeInterval[]) => void;
   updateStaff: (patch: Partial<StaffConfig>) => void;
   updateScheduleConfig: (patch: Partial<ScheduleConfig>) => void;
 
@@ -151,10 +152,10 @@ export const useAppStore = create<AppState>()(
         // No recalculation needed — order doesn't affect capacity
       }),
 
-      updateOpeningHours: (weekday, minutes) => set(state => {
+      updateOpeningHours: (weekday, intervals) => set(state => {
         const scenario = state.scenarios.find(s => s.id === state.activeScenarioId);
         if (!scenario) return;
-        scenario.resourceConfig.openingHours[weekday] = minutes;
+        scenario.resourceConfig.openingHours[weekday] = intervals;
         scenario.results = calculateCapacity(scenario.examinations, scenario.resourceGroups, scenario.resourceConfig);
       }),
 
@@ -234,7 +235,7 @@ export const useAppStore = create<AppState>()(
       }),
     })),
     {
-      name: 'process-calc-v16',
+      name: 'process-calc-v18',
       partialize: (state) => ({
         scenarios: state.scenarios,
         activeScenarioId: state.activeScenarioId,

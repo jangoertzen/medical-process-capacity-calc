@@ -62,14 +62,11 @@ export default function Dashboard() {
     return { byAbsDay, worstWaitGroupName: worstWaitGroup?.name ?? '—', worstWaitMin: worstWait?.[1] ?? 0, avgWaitPerPatient }
   }, [activeScenario, results, nPatients])
 
-  // Revenue calculation: sum per-patient revenue, account for lzPercent on LZ exams
+  // Revenue calculation: sum per-patient revenue scaled by each exam's participationPercent
   const revenuePerPatient = useMemo(() => {
     if (!activeScenario) return 0
-    const lzPct = (activeScenario.resourceConfig.scheduleConfig.lzPercent ?? 100) / 100
-    const lzGroupIds = new Set(['langzeit-ekg', 'langzeit-rr'])
     return activeScenario.examinations.reduce((sum, exam) => {
-      const factor = lzGroupIds.has(exam.resourceGroupId) ? lzPct : 1
-      return sum + exam.revenueEur * factor
+      return sum + exam.revenueEur * ((exam.participationPercent ?? 100) / 100)
     }, 0)
   }, [activeScenario])
 
@@ -244,30 +241,6 @@ export default function Dashboard() {
         <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap', alignItems: 'flex-start' }}>
           <div>
             <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.4rem', fontWeight: 500 }}>
-              Programmtage
-            </div>
-            <div style={{ display: 'flex', gap: '0.4rem' }}>
-              {([2, 3] as const).map(d => {
-                const active = (schedule.programDays ?? 3) === d
-                return (
-                  <button key={d} onClick={() => updateScheduleConfig({ programDays: d })} style={{
-                    padding: '0.3rem 0.65rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem',
-                    border: `1px solid ${active ? '#3b82f6' : '#cbd5e1'}`,
-                    background: active ? '#eff6ff' : '#f8fafc',
-                    color: active ? '#1d4ed8' : '#94a3b8',
-                    fontWeight: active ? 700 : 400,
-                  }}>
-                    {d} Tage
-                  </button>
-                )
-              })}
-            </div>
-            <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.3rem' }}>
-              Bei 2 Tagen werden SD-Sono und Abschlussgespräch an Tag 2 durchgeführt.
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.4rem', fontWeight: 500 }}>
               Kohortenstart-Wochentage
             </div>
             <div style={{ display: 'flex', gap: '0.4rem' }}>
@@ -325,22 +298,6 @@ export default function Dashboard() {
             </div>
             <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.3rem' }}>
               Automatisch optimiert. Gerät wird am Folgetag zurückgegeben.{(schedule.programDays ?? 3) === 3 && ' Tag 3 ist ausgeschlossen.'}
-            </div>
-          </div>
-
-          <div>
-            <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.4rem', fontWeight: 500 }}>
-              Langzeit-Anteil
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <input type="range" min={0} max={100} step={5}
-                value={schedule.lzPercent ?? 100}
-                onChange={e => updateScheduleConfig({ lzPercent: Number(e.target.value) })}
-                style={{ width: '120px', accentColor: '#3b82f6' }} />
-              <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{schedule.lzPercent ?? 100}%</span>
-            </div>
-            <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.3rem' }}>
-              Anteil der Patienten mit Langzeit-EKG/-RR.
             </div>
           </div>
 

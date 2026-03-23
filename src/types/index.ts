@@ -1,8 +1,17 @@
 export type DayNumber = 1 | 2 | 3;
 export type Weekday = 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri';
-export type OpeningHours = Record<Weekday, number>;
+
+export interface TimeInterval {
+  /** Minutes from midnight, e.g. 480 = 08:00 */
+  startMin: number;
+  /** Minutes from midnight, e.g. 720 = 12:00 */
+  endMin: number;
+}
+
+/** Per-weekday list of open time intervals (sorted, non-overlapping) */
+export type OpeningHours = Record<Weekday, TimeInterval[]>;
 export type ResourceGroupType = 'time_based' | 'device_count' | 'staff_multiplied';
-export type AppPage = 'dashboard' | 'untersuchungen' | 'ressourcen' | 'szenarien' | 'diagramme';
+export type AppPage = 'dashboard' | 'untersuchungen' | 'ressourcen' | 'szenarien' | 'diagramme' | 'import-export';
 
 export interface Examination {
   id: string;
@@ -20,6 +29,8 @@ export interface Examination {
   order: number;
   /** This exam must always be scheduled after the referenced exam id */
   mustFollowExamId: string | null;
+  /** Percentage of patients (0–100) who receive this examination. Default: 100 */
+  participationPercent: number;
 }
 
 export interface ResourceGroup {
@@ -56,10 +67,6 @@ export interface ScheduleConfig {
   lzAnlegenDay: 1 | 2;
   /** Number of visit days per patient: 2 or 3. When 2, Tag 3 exams move to Tag 2. */
   programDays: 2 | 3;
-  /** Percentage of patients (0–100) who receive Langzeit-EKG & Langzeit-RR */
-  lzPercent: number;
-  /** Percentage of patients (0–100) who receive Ergometrie */
-  ergoPercent: number;
   /** Maximum patient stay per visit day in minutes (default 120) */
   maxStayMinutes: number;
   /** Whether to add a 5-minute break between each examination */
