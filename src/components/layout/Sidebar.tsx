@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, ClipboardList, Settings, GitBranch, BarChart3, ArrowLeftRight, TrendingUp } from 'lucide-react'
+import { LayoutDashboard, ClipboardList, Settings, GitBranch, BarChart3, ArrowLeftRight, TrendingUp, Stethoscope } from 'lucide-react'
 
 const navItems = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -8,6 +8,7 @@ const navItems = [
   { path: '/szenarien', label: 'Szenarien', icon: GitBranch },
   { path: '/diagramme', label: 'Diagramme', icon: BarChart3 },
   { path: '/optimierung', label: 'Optimierung', icon: TrendingUp },
+  { path: '/tagesgeschaeft', label: 'Tagesgeschäft', icon: Stethoscope },
   { path: '/import-export', label: 'Import / Export', icon: ArrowLeftRight },
 ]
 

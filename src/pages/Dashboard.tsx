@@ -176,6 +176,12 @@ export default function Dashboard() {
         </p>
       </div>
 
+      {activeScenario.resourceConfig.dailyBusiness?.enabled && (
+        <div style={{ padding: '0.6rem 1rem', background: '#fefce8', border: '1px solid #fde68a', borderRadius: '8px', fontSize: '0.82rem', color: '#713f12' }}>
+          <strong>Tagesgeschäft aktiv:</strong> Für reguläre Patiententermine wird Kapazität freigehalten. Sie fehlt den Check-ups (Details unter „Tagesgeschäft“).
+        </div>
+      )}
+
       <BottleneckAlert bottlenecks={bottleneckInfo.resources} />
 
       <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>

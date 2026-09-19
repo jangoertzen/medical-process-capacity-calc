@@ -56,6 +56,7 @@ Der Tagesplan-Tab visualisiert den geplanten Ablauf eines Besuchstages mit allen
 - **Gerätekonfiguration** im Reiter Untersuchungen (Panel „Ressourcengruppen konfigurieren“), Personal im Reiter Ressourcen
 - **Patientenplan**: Kohortenstart-Wochentage, 2- oder 3-Tage-Programm, maximale Verweildauer pro Besuchstag, optional 5 min Pause zwischen Untersuchungen
 - **Umsatzoptimierung** (Menü „Optimierung“): schlägt vor, bei wie viel Prozent der Patienten jede Untersuchung stattfinden sollte, damit der Wochenumsatz unter den Kapazitäten maximal wird; mit Nachfrage-Obergrenze, Min./Max. je Untersuchung, Übernahme als neues Szenario (siehe [Funktionsweise](docs/FUNKTIONSWEISE.md#10-umsatzoptimierung))
+- **Tagesgeschäft** (Menü „Tagesgeschäft“, an-/ausschaltbar): reguläre 15-Minuten-Patiententermine belegen Ärzte, MFA und Ultraschall (Minuten je Ressource einstellbar). Termine pro Wochentag, Schwankung in Prozent und Wert je Termin sind einstellbar. Die Seite zeigt die beste Zahl freizuhaltender Termine pro Tag und in einer Slot-Ansicht, wann und wo Kapazität für das Tagesgeschäft blockiert werden sollte (siehe [Funktionsweise](docs/FUNKTIONSWEISE.md#11-tagesgeschäft))
 - **Automatische Optimierung**: Besuchsabstände (Tag 1→2, Tag 1→3) und der Tag zum Anlegen der Langzeitgeräte werden vom Rechner gewählt
 - **3-Wochen-Kapazitätsmodell**: Woche 1 (Anlauf), Woche 2 (Steady State, bindend), Woche 3 (Auslauf)
 - **Engpassanalyse per Sensitivität**: Für jede Ressource wird „+1 Einheit“ simuliert; alle mit Durchsatzgewinn gelten als Engpass
@@ -99,7 +100,7 @@ defaultData.ts  →  appStore.ts  →  calculator.ts  →  UI-Komponenten
 ```
 src/
   data/         # Standarddaten (Untersuchungen, Ressourcengruppen)
-  lib/          # Kapazitätsrechner (calculator.ts), Scheduler (scheduler.ts), Umsatzoptimierer (optimizer.ts), Datenmigration (normalize.ts)
+  lib/          # Kapazitätsrechner (calculator.ts), Scheduler (scheduler.ts), Umsatzoptimierer (optimizer.ts), Tagesgeschäft (dailyBusiness.ts), Datenmigration (normalize.ts)
   pages/        # Dashboard, Untersuchungen, Ressourcen, Szenarien, Diagramme, Import/Export
   components/   # Charts (Gantt, Sensitivität), Dashboard-Bausteine, Layout, Szenario-Vergleich
   store/        # Zustand-Store mit allen Aktionen
@@ -108,7 +109,7 @@ docs/           # Funktionsweise (FUNKTIONSWEISE.md) und Screenshots
 scripts/        # take-screenshots.mjs (Puppeteer, erzeugt docs/screenshots)
 ```
 
-Der Router ist pfadbasiert (`/dashboard`, `/untersuchungen`, `/ressourcen`, `/szenarien`, `/diagramme`, `/optimierung`, `/import-export`).
+Der Router ist pfadbasiert (`/dashboard`, `/untersuchungen`, `/ressourcen`, `/szenarien`, `/diagramme`, `/optimierung`, `/tagesgeschaeft`, `/import-export`).
 
 ---
 
