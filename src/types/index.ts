@@ -39,6 +39,12 @@ export interface Examination {
   deviceRole?: 'attach' | 'return';
   /** Always scheduled as the last exam of the patient's visit (e.g. Abschlussgespräch) */
   scheduleLast?: boolean;
+  /**
+   * Number of devices dedicated to THIS examination (e.g. 2 ECG machines). An additional limit next to
+   * the group's shared room/staff: capacity ≤ deviceCount × opening minutes / this exam's minutes per patient.
+   * Empty/null = no device limit. Not used for exams in `device_count` groups.
+   */
+  deviceCount?: number | null;
   /** Bounds (0–100) for the revenue optimizer; default 0 and 100 */
   participationMin?: number;
   participationMax?: number;

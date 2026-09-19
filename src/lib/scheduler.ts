@@ -1,5 +1,5 @@
 import type { Examination, ResourceGroup, ResourceConfig, DayNumber, Weekday, TimeInterval } from '@/types';
-import { getTotalOpeningMinutes, getStaffCount, isDeviceAttach, isDeviceReturn } from './calculator';
+import { getTotalOpeningMinutes, getStaffCount, isDeviceAttach, isDeviceReturn, examDeviceKey, hasOwnDevices } from './calculator';
 
 const WEEKDAY_ORDER: Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 
@@ -72,6 +72,11 @@ function itemOf(e: Examination): ExamItem {
   };
 }
 
+/** Resources an exam occupies: its group, plus its own devices when it has a device limit. */
+function resourceKeys(e: Examination): string[] {
+  return hasOwnDevices(e) ? [e.resourceGroupId, examDeviceKey(e.id)] : [e.resourceGroupId];
+}
+
 function buildExamBlocks(exams: Examination[]): ExamBlock[] {
   const byName = new Map<string, Examination>();
   for (const e of exams) byName.set(e.name, e);
@@ -87,7 +92,7 @@ function buildExamBlocks(exams: Examination[]): ExamBlock[] {
       const partner = byName.get(exam.parallelWith);
       if (partner && partner.parallelWith === exam.name && !visited.has(partner.id)) {
         visited.add(partner.id);
-        const groupIds = [...new Set([exam.resourceGroupId, partner.resourceGroupId])];
+        const groupIds = [...new Set([...resourceKeys(exam), ...resourceKeys(partner)])];
         blocks.push({
           items: [
             itemOf(exam),
@@ -104,7 +109,7 @@ function buildExamBlocks(exams: Examination[]): ExamBlock[] {
     blocks.push({
       items: [itemOf(exam)],
       duration: exam.durationMin,
-      groupIds: [exam.resourceGroupId],
+      groupIds: resourceKeys(exam),
       primaryGroupId: exam.resourceGroupId,
     });
   }
@@ -229,6 +234,10 @@ function scheduleDay(
   for (const group of resourceGroups) {
     const slotCount = getGroupSlots(group, config);
     resourceSlots.set(group.id, Array(Math.max(1, slotCount)).fill(0));
+  }
+  // One lane per device of an exam with its own device limit
+  for (const exam of examinations) {
+    if (hasOwnDevices(exam)) resourceSlots.set(examDeviceKey(exam.id), Array(Number(exam.deviceCount)).fill(0));
   }
 
   // Exams per visit stage. Device "return" exams are never scheduled; "attach" exams

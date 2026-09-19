@@ -5,7 +5,7 @@ import { BottleneckAlert } from '@/components/dashboard/BottleneckAlert'
 import { WeeklyCalendar } from '@/components/dashboard/WeeklyCalendar'
 import { DayScheduleGantt } from '@/components/charts/DayScheduleGantt'
 import { buildWeekSchedule, analyzeScheduleDay } from '@/lib/scheduler'
-import { computeQuickThroughput, applyBestSchedule } from '@/lib/calculator'
+import { computeQuickThroughput, applyBestSchedule, hasOwnDevices, examDeviceKey } from '@/lib/calculator'
 import type { Weekday } from '@/types'
 
 const WEEKDAYS: Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
@@ -143,6 +143,20 @@ export default function Dashboard() {
       }
 
       allDeltas.push({ groupId, groupName: label, delta, limitingCapacity: limitingCap === Infinity ? 0 : limitingCap })
+    }
+
+    // Devices dedicated to a single examination (e.g. ECG machines)
+    for (const exam of examinations) {
+      if (!hasOwnDevices(exam)) continue
+      const modExams = examinations.map(e => e.id === exam.id ? { ...e, deviceCount: Number(e.deviceCount) + 1 } : e)
+      const delta = computeQuickThroughput(modExams, resourceGroups, resourceConfig) - results.weeklyThroughput
+      let limitingCap = Infinity
+      for (const wd of results.weekdayResults) {
+        for (const r of wd.resourceResults) {
+          if (r.resourceGroupId === examDeviceKey(exam.id) && r.limitingCapacity < limitingCap) limitingCap = r.limitingCapacity
+        }
+      }
+      allDeltas.push({ groupId: examDeviceKey(exam.id), groupName: `${exam.name} (Geräte)`, delta, limitingCapacity: limitingCap === Infinity ? 0 : limitingCap })
     }
 
     // Sort by delta descending — resources with the biggest impact first

@@ -60,6 +60,7 @@ function AddExamModal({ day, resourceGroups, allExams, onClose, onAdd }: AddExam
   const [participationPercent, setParticipationPercent] = useState(100)
   const [deviceRole, setDeviceRole] = useState<'attach' | 'return'>('attach')
   const [scheduleLast, setScheduleLast] = useState(false)
+  const [deviceCount, setDeviceCount] = useState<number | null>(null)
   const isDeviceGroup = resourceGroups.find(g => g.id === resourceGroupId)?.groupType === 'device_count'
 
   const maxOrder = allExams.filter(e => e.day === selectedDay).reduce((m, e) => Math.max(m, e.order), 0)
@@ -80,6 +81,7 @@ function AddExamModal({ day, resourceGroups, allExams, onClose, onAdd }: AddExam
       participationPercent,
       deviceRole: isDeviceGroup ? deviceRole : undefined,
       scheduleLast,
+      deviceCount: isDeviceGroup ? null : deviceCount,
     })
     onClose()
   }
@@ -128,6 +130,11 @@ function AddExamModal({ day, resourceGroups, allExams, onClose, onAdd }: AddExam
                 <option value="attach">{DEVICE_ROLE_LABELS.attach}</option>
                 <option value="return">{DEVICE_ROLE_LABELS.return}</option>
               </select>
+            </FormRow>
+          )}
+          {!isDeviceGroup && (
+            <FormRow label="Anzahl Geräte">
+              <DeviceCountInput value={deviceCount} onChange={setDeviceCount} />
             </FormRow>
           )}
           <FormRow label="Immer zuletzt">
@@ -240,6 +247,11 @@ function ExamCard({ exam, resourceGroups, allExams, isDragging = false, isOverla
             color: exam.staffRole === 'Arzt' ? '#b91c1c' : '#1d4ed8',
           }}>{exam.staffRole}</span>
           <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{exam.durationMin}min</span>
+          {exam.deviceCount ? (
+            <span title={`${exam.deviceCount} Gerät(e) nur für diese Untersuchung`} style={{ fontSize: '0.7rem', fontWeight: 600, color: '#0f766e', background: '#f0fdfa', padding: '0.1rem 0.35rem', borderRadius: '4px' }}>
+              {exam.deviceCount}×
+            </span>
+          ) : null}
           {(exam.participationPercent ?? 100) < 100 && (
             <span style={{ fontSize: '0.7rem', fontWeight: 600, color: '#f97316' }}>{exam.participationPercent}%</span>
           )}
@@ -319,6 +331,11 @@ function ExamCard({ exam, resourceGroups, allExams, isDragging = false, isOverla
                   <option value="attach">{DEVICE_ROLE_LABELS.attach}</option>
                   <option value="return">{DEVICE_ROLE_LABELS.return}</option>
                 </select>
+              </FormRow>
+            )}
+            {group?.groupType !== 'device_count' && (
+              <FormRow label="Anzahl Geräte">
+                <DeviceCountInput value={exam.deviceCount ?? null} onChange={v => updateExamination(exam.id, { deviceCount: v })} />
               </FormRow>
             )}
             <FormRow label="Immer zuletzt">
@@ -605,6 +622,20 @@ function ResourceGroupsPanel({ resourceGroups, allExams }: ResourceGroupsPanelPr
 // ---------------------------------------------------------------------------
 // Helper form row
 // ---------------------------------------------------------------------------
+
+/** Number of devices dedicated to one examination; empty = unlimited. */
+function DeviceCountInput({ value, onChange }: { value: number | null; onChange: (v: number | null) => void }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+      <input
+        type="number" min={1} max={50} value={value ?? ''} placeholder="∞"
+        onChange={e => { const v = parseInt(e.target.value); onChange(isNaN(v) || v < 1 ? null : v) }}
+        style={{ ...inputS, width: '64px' }}
+      />
+      <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>leer = unbegrenzt</span>
+    </div>
+  )
+}
 
 function FormRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (

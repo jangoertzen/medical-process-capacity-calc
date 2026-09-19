@@ -48,7 +48,7 @@ defaultData.ts ──► appStore.ts ──► calculator.ts ──► Seiten/Ko
 
 | Typ | Bedeutung |
 |---|---|
-| `Examination` | Eine Untersuchung: Tag (1/2/3), Dauer, Rolle (MFA/Arzt), Raum, Ressourcengruppe, **Patientenanteil** (`participationPercent`), Umsatz, `parallelWith` (Name der Partner-Untersuchung), `order`, `mustFollowExamId`, `deviceRole` (`attach`/`return`, nur in Gerätegruppen), `scheduleLast` (immer zuletzt), `participationMin`/`participationMax` (Grenzen für die Umsatzoptimierung) |
+| `Examination` | Eine Untersuchung: Tag (1/2/3), Dauer, Rolle (MFA/Arzt), Raum, Ressourcengruppe, **Patientenanteil** (`participationPercent`), `deviceCount` (eigene Geräte, optional), Umsatz, `parallelWith` (Name der Partner-Untersuchung), `order`, `mustFollowExamId`, `deviceRole` (`attach`/`return`, nur in Gerätegruppen), `scheduleLast` (immer zuletzt), `participationMin`/`participationMax` (Grenzen für die Umsatzoptimierung) |
 | `ResourceGroup` | Ein gemeinsamer Engpass (z. B. „Ultraschall“). `groupType` bestimmt die Formel, `deviceCount` die Anzahl Geräte/Räume, `staffType` (nur `staff_multiplied`) das bedienende Personal |
 | `ResourceConfig` | `openingHours` (Intervalle pro Wochentag), `staff` (Ärzte, MFA Funktionsdiagnostik, MFA Labor), `scheduleConfig`, `dailyBusiness` (Tagesgeschäft, siehe Abschnitt 11) |
 | `ScheduleConfig` | `startDays`, `programDays` (2 oder 3), `maxStayMinutes`, `breakBetweenExams`; außerdem `visitDayOffsets` und `lzAnlegenDay`, die der Rechner **selbst überschreibt** (siehe 4.4) |
@@ -86,6 +86,14 @@ Sonderregeln für Gerätezyklen (Gruppen vom Typ `device_count`, z. B. Langzeit-
 | `time_based` | `⌊ Geräte × Öffnungsminuten ÷ Zeitbedarf/Patient ⌋` | `Geräte = deviceCount` (Standard 1). Ultraschall hat 1 Gerät: **alle** Sono-Untersuchungen laufen durch dieses eine Gerät, egal wie viele Ärzte da sind |
 | `staff_multiplied` | `⌊ Personal × Öffnungsminuten ÷ Zeitbedarf/Patient ⌋` | Personalzahl aus `staff` (siehe unten) |
 | `device_count` | `⌊ Geräteanzahl ÷ Patientenanteil ⌋` | Reine Geräte-Obergrenze, unabhängig von Öffnungszeiten. Nur an Wochentagen, an denen die „anlegen“-Phase aktiv ist |
+
+**Geräte je Untersuchung.** Zusätzlich zur Gruppe kann jede Untersuchung eine eigene Geräteanzahl `deviceCount` haben (Feld „Anzahl Geräte“ auf der Karte; leer = kein Limit). Beispiel: EKG, ABI-Messung und Lungenfunktion teilen sich die Gruppe „Funktionsraum Tag 1“ (gemeinsamer Raum und MFA), das EKG hat aber nur 2 Geräte. Das ist eine **zusätzliche** Grenze; der gemeinsame Raum bzw. das Personal der Gruppe bleibt ein eigener Engpass:
+
+```
+Kapazität (Untersuchung) = ⌊ Geräte × Öffnungsminuten ÷ (Dauer × Patientenanteil) ⌋
+```
+
+Sie erscheint in den Ergebnissen als eigene Zeile „<Name> (Geräte)“ und zählt nur an Tagen, an denen die Phase der Untersuchung aktiv ist. Bei Untersuchungen in Gerätegruppen (`device_count`, z. B. Langzeit-EKG) gibt es das Feld nicht; sie werden über die Gerätezahl der Gruppe begrenzt. Im Scheduler hat jede Untersuchung mit Geräten so viele Bahnen wie Geräte: Zwei EKG-Termine dürfen nur dann gleichzeitig laufen, wenn mindestens 2 EKG-Geräte (und ein freier Platz in der Gruppe) da sind. Bei zwei parallelen Untersuchungen in einem Block (EKG ∥ ABI) sind die Geräte beider bis zum Ende des Blocks belegt.
 
 Welche Personalzahl gilt (`getStaffCount`)? Die der Gruppe zugeordnete `staffType` (`doctorCount`, `mfaFunktionsdiagnostik` oder `mfaLabor`; in der UI im Panel „Ressourcengruppen konfigurieren“ wählbar). Fehlt sie, gilt `mfaFunktionsdiagnostik`.
 

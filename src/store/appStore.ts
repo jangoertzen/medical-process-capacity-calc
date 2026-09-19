@@ -117,6 +117,7 @@ export const useAppStore = create<AppState>()(
         if (patch.resourceGroupId) {
           const isDevice = scenario.resourceGroups.find(g => g.id === exam.resourceGroupId)?.groupType === 'device_count';
           exam.deviceRole = isDevice ? (exam.deviceRole ?? 'attach') : undefined;
+          if (isDevice) exam.deviceCount = null; // own device limits don't apply to device-cycle exams
         }
         scenario.results = calculateCapacity(scenario.examinations, scenario.resourceGroups, scenario.resourceConfig);
       }),
