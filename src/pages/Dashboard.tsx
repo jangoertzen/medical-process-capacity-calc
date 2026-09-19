@@ -5,10 +5,11 @@ import { BottleneckAlert } from '@/components/dashboard/BottleneckAlert'
 import { WeeklyCalendar } from '@/components/dashboard/WeeklyCalendar'
 import { DayScheduleGantt } from '@/components/charts/DayScheduleGantt'
 import { buildWeekSchedule, analyzeScheduleDay } from '@/lib/scheduler'
-import { computeQuickThroughput } from '@/lib/calculator'
+import { computeQuickThroughput, applyBestSchedule } from '@/lib/calculator'
 import type { Weekday } from '@/types'
 
 const WEEKDAYS: Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+const STAFF_LABEL = { doctorCount: 'Arztgespräch', mfaLabor: 'MFA Labor', mfaFunktionsdiagnostik: 'MFA Funktionsdiagnostik' } as const
 const WD_DE: Record<Weekday, string> = { Mon: 'Mo', Tue: 'Di', Wed: 'Mi', Thu: 'Do', Fri: 'Fr' }
 
 export default function Dashboard() {
@@ -21,18 +22,9 @@ export default function Dashboard() {
   // Run scheduler & analyze for actual slot counts and wait times
   const scheduleAnalysis = useMemo(() => {
     if (!activeScenario || !results) return null
-    // Use the auto-determined bestLzAnlegenDay from the calculator
-    const configWithBestLz = {
-      ...activeScenario.resourceConfig,
-      scheduleConfig: {
-        ...activeScenario.resourceConfig.scheduleConfig,
-        lzAnlegenDay: results.bestLzAnlegenDay ?? activeScenario.resourceConfig.scheduleConfig.lzAnlegenDay,
-        visitDayOffsets: results.bestVisitDayOffsets ?? activeScenario.resourceConfig.scheduleConfig.visitDayOffsets,
-      },
-    }
+    const best = applyBestSchedule(activeScenario)
     const allSchedules = buildWeekSchedule(
-      activeScenario.examinations, activeScenario.resourceGroups,
-      configWithBestLz, nPatients,
+      best.examinations, best.resourceGroups, best.resourceConfig, nPatients,
     )
     // Per absDay analyses
     const byAbsDay = new Map<number, ReturnType<typeof analyzeScheduleDay>>()
@@ -78,7 +70,9 @@ export default function Dashboard() {
     if (!results || !activeScenario) return { resources: [] as { groupId: string; groupName: string; delta: number; limitingCapacity: number }[] }
 
     const { examinations, resourceGroups, resourceConfig } = activeScenario
-    const lzGroupIds = ['langzeit-ekg', 'langzeit-rr']
+    // All device_count groups are raised together: one device set serves several groups
+    const deviceGroups = resourceGroups.filter(g => g.groupType === 'device_count')
+    const deviceGroupIds = deviceGroups.map(g => g.id)
     const seenStaffFields = new Set<string>()
     const seenLz = { done: false }
     const allDeltas: { groupId: string; groupName: string; delta: number; limitingCapacity: number }[] = []
@@ -92,37 +86,26 @@ export default function Dashboard() {
       let groupId = group.id
 
       if (group.groupType === 'staff_multiplied') {
-        const groupExams = examinations.filter(e => group.examinationIds.includes(e.id))
-        let field: string
-        if (groupExams.some(e => e.staffRole === 'Arzt')) {
-          field = 'doctorCount'; label = 'Arztgespräch'
-        } else if (group.id === 'mfa-kapazitat') {
-          field = 'mfaLabor'; label = 'MFA Labor'
-        } else {
-          field = 'mfaFunktionsdiagnostik'; label = 'MFA Funktionsdiagnostik'
-        }
+        const field = group.staffType ?? 'mfaFunktionsdiagnostik'
+        label = STAFF_LABEL[field]
         if (seenStaffFields.has(field)) continue
         seenStaffFields.add(field)
         groupId = field
-        modConfig = { ...resourceConfig, staff: { ...resourceConfig.staff, [field]: resourceConfig.staff[field as keyof typeof resourceConfig.staff] + 1 } }
-      } else if (lzGroupIds.includes(group.id)) {
+        modConfig = { ...resourceConfig, staff: { ...resourceConfig.staff, [field]: resourceConfig.staff[field] + 1 } }
+      } else if (group.groupType === 'device_count') {
         if (seenLz.done) continue
         seenLz.done = true
-        groupId = 'langzeit'
-        label = 'Langzeit-Geräte (EKG + RR)'
-        const ekgCount = (resourceGroups.find(g => g.id === 'langzeit-ekg')?.deviceCount ?? 4) + 1
-        const rrCount = (resourceGroups.find(g => g.id === 'langzeit-rr')?.deviceCount ?? 4) + 1
+        groupId = 'geraete'
+        label = deviceGroups.map(g => g.name).join(' + ')
         const modGroups = resourceGroups.map(g =>
-          g.id === 'langzeit-ekg' ? { ...g, deviceCount: ekgCount }
-          : g.id === 'langzeit-rr' ? { ...g, deviceCount: rrCount }
-          : g
+          deviceGroupIds.includes(g.id) ? { ...g, deviceCount: (g.deviceCount ?? g.slotsPerDay) + 1 } : g
         )
         const newTP = computeQuickThroughput(examinations, modGroups, modConfig)
         const delta = newTP - results.weeklyThroughput
         let limitingCap = Infinity
         for (const wd of results.weekdayResults) {
           for (const r of wd.resourceResults) {
-            if ((r.resourceGroupId === 'langzeit-ekg' || r.resourceGroupId === 'langzeit-rr') && r.limitingCapacity < limitingCap) {
+            if (deviceGroupIds.includes(r.resourceGroupId) && r.limitingCapacity < limitingCap) {
               limitingCap = r.limitingCapacity
             }
           }
@@ -130,7 +113,7 @@ export default function Dashboard() {
         allDeltas.push({ groupId, groupName: label, delta, limitingCapacity: limitingCap === Infinity ? 0 : limitingCap })
         continue
       } else {
-        const currentCount = group.deviceCount ?? (group.groupType === 'device_count' ? group.slotsPerDay : 1)
+        const currentCount = group.deviceCount ?? 1
         const modGroups = resourceGroups.map(g => g.id === group.id ? { ...g, deviceCount: currentCount + 1 } : g)
         const newTP = computeQuickThroughput(examinations, modGroups, modConfig)
         const delta = newTP - results.weeklyThroughput
@@ -266,6 +249,31 @@ export default function Dashboard() {
 
           <div>
             <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.4rem', fontWeight: 500 }}>
+              Programmdauer
+            </div>
+            <div style={{ display: 'flex', gap: '0.4rem' }}>
+              {([3, 2] as const).map(d => {
+                const active = (schedule.programDays ?? 3) === d
+                return (
+                  <button key={d} onClick={() => updateScheduleConfig({ programDays: d })} style={{
+                    padding: '0.3rem 0.65rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8rem',
+                    border: `1px solid ${active ? '#3b82f6' : '#cbd5e1'}`,
+                    background: active ? '#eff6ff' : '#f8fafc',
+                    color: active ? '#1d4ed8' : '#94a3b8',
+                    fontWeight: active ? 700 : 400,
+                  }}>
+                    {d} Tage
+                  </button>
+                )
+              })}
+            </div>
+            <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '0.3rem' }}>
+              Bei 2 Tagen wandern alle Tag-3-Untersuchungen auf Tag 2.
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.4rem', fontWeight: 500 }}>
               Besuchsabstände
             </div>
             <div style={{
@@ -351,17 +359,7 @@ export default function Dashboard() {
           Wochenkalender — Tagesplan mit Uhrzeiten
         </div>
         <DayScheduleGantt
-          scenario={{
-            ...activeScenario,
-            resourceConfig: {
-              ...activeScenario.resourceConfig,
-              scheduleConfig: {
-                ...activeScenario.resourceConfig.scheduleConfig,
-                lzAnlegenDay: results.bestLzAnlegenDay,
-                visitDayOffsets: results.bestVisitDayOffsets,
-              },
-            },
-          }}
+          scenario={applyBestSchedule(activeScenario)}
           nPatients={Math.max(1, results.maxPatientsPerCohort)}
         />
       </div>

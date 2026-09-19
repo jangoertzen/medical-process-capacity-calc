@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { useAppStore } from '@/store/appStore'
 import { calculateCapacity } from '@/lib/calculator'
+import { normalizeScenario } from '@/lib/normalize'
 import type { Scenario } from '@/types'
 
 type ImportStatus =
@@ -74,9 +75,10 @@ export default function ImportExport() {
         if (!s.id || !s.name || !s.examinations || !s.resourceGroups || !s.resourceConfig) {
           throw new Error(`Szenario "${s.name ?? s.id}" hat unvollständige Daten.`)
         }
+        const n = normalizeScenario(s)
         return {
-          ...s,
-          results: calculateCapacity(s.examinations, s.resourceGroups, s.resourceConfig),
+          ...n,
+          results: calculateCapacity(n.examinations, n.resourceGroups, n.resourceConfig),
         }
       })
 

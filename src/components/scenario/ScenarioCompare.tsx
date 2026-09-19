@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { useAppStore } from '@/store/appStore'
 import type { Scenario } from '@/types'
 import { buildWeekSchedule, analyzeScheduleDay } from '@/lib/scheduler'
+import { applyBestSchedule } from '@/lib/calculator'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -20,15 +21,9 @@ function computeWaitAnalysis(scenario: Scenario) {
   if (!results) return { avgWaitPerPatient: 0, waitByGroup: [] as { name: string; waitMin: number }[] }
 
   const nPatients = Math.max(1, results.maxPatientsPerCohort)
-  const config = {
-    ...scenario.resourceConfig,
-    scheduleConfig: {
-      ...scenario.resourceConfig.scheduleConfig,
-      lzAnlegenDay: results.bestLzAnlegenDay ?? scenario.resourceConfig.scheduleConfig.lzAnlegenDay,
-    },
-  }
+  const best = applyBestSchedule(scenario)
   const allSchedules = buildWeekSchedule(
-    scenario.examinations, scenario.resourceGroups, config, nPatients,
+    best.examinations, best.resourceGroups, best.resourceConfig, nPatients,
   )
 
   const waitTotals: Record<string, number> = {}

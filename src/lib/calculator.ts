@@ -10,12 +10,30 @@ import type {
   DayNumber,
   Weekday,
   TimeInterval,
+  Scenario,
 } from '@/types';
 import { buildWeekSchedule } from './scheduler';
 
 /** Sum of all open interval durations for a day */
 export function getTotalOpeningMinutes(intervals: TimeInterval[]): number {
   return intervals.reduce((sum, iv) => sum + Math.max(0, iv.endMin - iv.startMin), 0);
+}
+
+/**
+ * Convert "minutes since opening" (the scheduler's timeline, closed gaps removed)
+ * to minutes since midnight. `asEnd` maps a value on an interval boundary to the
+ * END of the earlier interval (use for the end of a block), otherwise to the
+ * START of the next one. Values beyond closing time continue after the last interval.
+ */
+export function toClockMin(intervals: TimeInterval[], m: number, asEnd = false): number {
+  if (intervals.length === 0) return 480 + m;
+  let acc = 0;
+  for (const iv of intervals) {
+    const len = Math.max(0, iv.endMin - iv.startMin);
+    if (m < acc + len || (asEnd && m <= acc + len)) return iv.startMin + (m - acc);
+    acc += len;
+  }
+  return intervals[intervals.length - 1].endMin + (m - acc);
 }
 
 const WEEKDAY_ORDER: Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
@@ -82,35 +100,23 @@ function resolveSteps(examinations: Examination[]): Step[] {
 // Staff resolution
 // ---------------------------------------------------------------------------
 
-function getStaffCount(
-  group: ResourceGroup,
-  examinations: Examination[],
-  staff: ResourceConfig['staff'],
-): number {
-  const groupExams = examinations.filter(e => group.examinationIds.includes(e.id));
-  if (groupExams.some(e => e.staffRole === 'Arzt')) return staff.doctorCount;
-  if (group.id === 'mfa-kapazitat') return staff.mfaLabor;
-  return staff.mfaFunktionsdiagnostik;
+/** Staff pool size serving a `staff_multiplied` group (falls back to Funktionsdiagnostik-MFA). */
+export function getStaffCount(group: ResourceGroup, staff: ResourceConfig['staff']): number {
+  return staff[group.staffType ?? 'mfaFunktionsdiagnostik'];
 }
 
 // ---------------------------------------------------------------------------
 // Time per patient for a resource group × specific patient stage
 // ---------------------------------------------------------------------------
 
-/** True when exam belongs to a Langzeit device group and is an "anlegen" step */
-function isLzAnlegen(exam: Examination): boolean {
-  return (
-    (exam.resourceGroupId === 'langzeit-ekg' || exam.resourceGroupId === 'langzeit-rr') &&
-    exam.name.toLowerCase().includes('anlegen')
-  );
+/** Device cycle: exam that hands out the device (counts on the lzAnlegenDay visit) */
+export function isDeviceAttach(exam: Examination): boolean {
+  return exam.deviceRole === 'attach';
 }
 
-/** True when exam belongs to a Langzeit device group and is an "abnehmen" step */
-function isLzAbnehmen(exam: Examination): boolean {
-  return (
-    (exam.resourceGroupId === 'langzeit-ekg' || exam.resourceGroupId === 'langzeit-rr') &&
-    (exam.name.toLowerCase().includes('abnehmen') || exam.name.toLowerCase().includes('abnahme'))
-  );
+/** Device cycle: exam that takes the device back (not scheduled) */
+export function isDeviceReturn(exam: Examination): boolean {
+  return exam.deviceRole === 'return';
 }
 
 /**
@@ -133,10 +139,10 @@ function timeForGroupAndStage(
       if (!group.examinationIds.includes(e.id)) return false;
 
       // LZ abnehmen is excluded (no device return)
-      if (isLzAbnehmen(e)) return false;
+      if (isDeviceReturn(e)) return false;
 
       // LZ anlegen counts only on the configured lzAnlegenDay stage
-      if (isLzAnlegen(e)) return stage === lzAnlegenDay;
+      if (isDeviceAttach(e)) return stage === lzAnlegenDay;
 
       // Normal exams: use their static day
       return e.day === stage;
@@ -216,16 +222,18 @@ function computeDayResources(
 
   for (const group of resourceGroups) {
     let limitingCapacity: number;
+    let rawCapacity: number;
     let timePerPatientMin: number;
 
     if (group.groupType === 'device_count') {
       if (!hasAnlegenStage) continue;
       const deviceCount = group.deviceCount ?? group.slotsPerDay;
       // Use participationPercent from the anlegen exam in this group
-      const anlegenExam = examinations.find(e => group.examinationIds.includes(e.id) && isLzAnlegen(e));
+      const anlegenExam = examinations.find(e => group.examinationIds.includes(e.id) && isDeviceAttach(e));
       const participation = (anlegenExam?.participationPercent ?? 100) / 100;
       if (participation === 0) continue;
-      limitingCapacity = Math.floor(deviceCount / participation);
+      rawCapacity = deviceCount / participation;
+      limitingCapacity = Math.floor(rawCapacity);
       timePerPatientMin = 0;
     } else {
       timePerPatientMin = activeStages.reduce(
@@ -236,11 +244,11 @@ function computeDayResources(
 
       if (group.groupType === 'time_based') {
         const mult = group.deviceCount ?? 1;
-        limitingCapacity = Math.floor((mult * openingMinutes) / timePerPatientMin);
+        rawCapacity = (mult * openingMinutes) / timePerPatientMin;
       } else {
-        const staffCount = getStaffCount(group, examinations, staff);
-        limitingCapacity = Math.floor((staffCount * openingMinutes) / timePerPatientMin);
+        rawCapacity = (getStaffCount(group, staff) * openingMinutes) / timePerPatientMin;
       }
+      limitingCapacity = Math.floor(rawCapacity);
     }
 
     resourceResults.push({
@@ -249,7 +257,7 @@ function computeDayResources(
       weekday,
       openingMinutes,
       timePerPatientMin,
-      rawCapacity: limitingCapacity,
+      rawCapacity,
       limitingCapacity,
       isBottleneck: false,
       utilizationPct: 0,
@@ -366,10 +374,68 @@ function allVisitDayOffsets(programDays: 2 | 3 = 3): [0, number, number][] {
   return combos;
 }
 
+/** Grid search over all valid (visitDayOffsets, lzAnlegenDay) combos; first best wins on ties. */
+function findBestAnalytic(
+  examinations: Examination[],
+  resourceGroups: ResourceGroup[],
+  config: ResourceConfig,
+  allSteps: Step[],
+  programDays: 2 | 3,
+) {
+  let bestN = 0;
+  let lzDay: 1 | 2 = 1;
+  let offsets: [0, number, number] = [0, 1, 2];
+  let result: { weekdayResults: WeekdayCapacityResult[]; globalMaxN: number } = { weekdayResults: [], globalMaxN: 0 };
+
+  for (const o of allVisitDayOffsets(programDays)) {
+    for (const lz of [1, 2] as const) {
+      const r = computeAnalyticalCapacity(examinations, resourceGroups, config, allSteps, o, lz);
+      if (r.globalMaxN > bestN) {
+        bestN = r.globalMaxN;
+        lzDay = lz;
+        offsets = o;
+        result = r;
+      }
+    }
+  }
+  return { lzDay, offsets, result };
+}
+
+/**
+ * Analytical capacity only (no scheduler validation): the per-weekday resource results of
+ * the best visit-offset combination, including unrounded `rawCapacity`. With `fixed`, only that
+ * combination is evaluated (about 50× cheaper) — for search loops (optimizer).
+ */
+export function analyticCapacity(
+  rawExaminations: Examination[],
+  resourceGroups: ResourceGroup[],
+  config: ResourceConfig,
+  fixed?: { offsets: [0, number, number]; lzDay: 1 | 2 },
+): { globalMaxN: number; weekdayResults: WeekdayCapacityResult[]; offsets: [0, number, number]; lzDay: 1 | 2 } {
+  const programDays = config.scheduleConfig.programDays ?? 3;
+  const examinations = applyProgramDays(rawExaminations, programDays);
+  const allSteps = resolveSteps(examinations);
+  if (fixed) {
+    const result = computeAnalyticalCapacity(examinations, resourceGroups, config, allSteps, fixed.offsets, fixed.lzDay);
+    return { ...result, ...fixed };
+  }
+  const { result, offsets, lzDay } = findBestAnalytic(examinations, resourceGroups, config, allSteps, programDays);
+  return { ...result, offsets, lzDay };
+}
+
+/** Search shortcuts for the optimizer; regular callers pass nothing. */
+export interface CapacityOptions {
+  /** Upper bound for patients per cohort (demand limit) */
+  maxPatientsPerCohort?: number;
+  /** Evaluate only this visit-offset / LZ-day combination instead of searching all */
+  fixedCombo?: { offsets: [0, number, number]; lzDay: 1 | 2 };
+}
+
 export function calculateCapacity(
   rawExaminations: Examination[],
   resourceGroups: ResourceGroup[],
   config: ResourceConfig,
+  options?: CapacityOptions,
 ): WeeklyCapacityResult {
   const programDays = config.scheduleConfig.programDays ?? 3;
   const examinations = applyProgramDays(rawExaminations, programDays);
@@ -378,28 +444,22 @@ export function calculateCapacity(
   const { startDays } = scheduleConfig;
 
   // --- Auto-determine best (visitDayOffsets, lzAnlegenDay) combination ---
-  let bestN = 0;
-  let bestLzDay: 1 | 2 = 1;
-  let bestOffsets: [0, number, number] = [0, 1, 2];
-  let bestResult: { weekdayResults: WeekdayCapacityResult[]; globalMaxN: number } | null = null;
-
-  for (const offsets of allVisitDayOffsets(programDays)) {
-    for (const lzDay of [1, 2] as const) {
-      const result = computeAnalyticalCapacity(examinations, resourceGroups, config, allSteps, offsets, lzDay);
-      if (result.globalMaxN > bestN) {
-        bestN = result.globalMaxN;
-        bestLzDay = lzDay;
-        bestOffsets = offsets;
-        bestResult = result;
+  const fixed = options?.fixedCombo;
+  const best = fixed
+    ? {
+        lzDay: fixed.lzDay,
+        offsets: fixed.offsets,
+        result: computeAnalyticalCapacity(examinations, resourceGroups, config, allSteps, fixed.offsets, fixed.lzDay),
       }
-    }
-  }
-
-  const bestLzAnlegenDay = bestLzDay;
-  const bestVisitDayOffsets = bestOffsets;
-  let { weekdayResults, globalMaxN } = bestResult ?? { weekdayResults: [], globalMaxN: 0 };
+    : findBestAnalytic(examinations, resourceGroups, config, allSteps, programDays);
+  const bestLzAnlegenDay = best.lzDay;
+  const bestVisitDayOffsets = best.offsets;
+  const { weekdayResults, globalMaxN: analyticMaxN } = best.result;
+  const nCap = options?.maxPatientsPerCohort;
+  let globalMaxN = nCap === undefined ? analyticMaxN : Math.min(analyticMaxN, Math.max(1, nCap));
 
   // --- Validate capacity with scheduler (respects maxStayMinutes) ---
+  const analyticN = analyticMaxN;
   while (globalMaxN > 1 && !scheduleFitsOpeningHours(examinations, resourceGroups, config, globalMaxN, bestVisitDayOffsets, bestLzAnlegenDay)) {
     globalMaxN--;
   }
@@ -408,7 +468,9 @@ export function calculateCapacity(
   for (const wd of weekdayResults) {
     wd.maxPatientsPerCohort = globalMaxN;
     for (const r of wd.resourceResults) {
-      r.isBottleneck = r.limitingCapacity === globalMaxN;
+      // Tightest resource(s) by analytical capacity — still named when the
+      // scheduler lowered N below it.
+      r.isBottleneck = r.limitingCapacity === analyticN;
       r.utilizationPct =
         r.limitingCapacity > 0 ? Math.round((globalMaxN / r.limitingCapacity) * 100) : 0;
     }
@@ -441,7 +503,7 @@ export function calculateCapacity(
       resourceResults.length > 0 ? Math.min(...resourceResults.map(r => r.limitingCapacity)) : 0;
 
     for (const r of resourceResults) {
-      r.isBottleneck = r.limitingCapacity === globalMaxN && week === 2;
+      r.isBottleneck = r.limitingCapacity === analyticN && week === 2;
       r.utilizationPct =
         r.limitingCapacity > 0 ? Math.round((globalMaxN / r.limitingCapacity) * 100) : 0;
     }
@@ -469,7 +531,9 @@ export function calculateCapacity(
     resourceGroupName: bottleneckRes?.resourceGroupName ?? '',
     limitingCapacity: globalMaxN,
     affectedWeekday: bottleneckWd?.weekday ?? 'Mon',
-    description: `${bottleneckRes?.resourceGroupName ?? '—'} begrenzt auf ${globalMaxN} Patienten/Kohorte`,
+    description: globalMaxN < analyticN
+      ? `${bottleneckRes?.resourceGroupName ?? '—'}: Kapazität ${analyticN}, durch Ablaufplanung (Wartezeit/Aufenthalt) auf ${globalMaxN} Patienten/Kohorte begrenzt`
+      : `${bottleneckRes?.resourceGroupName ?? '—'} begrenzt auf ${globalMaxN} Patienten/Kohorte`,
   };
 
   const allResourceUtilization = weekdayResults.flatMap(d => d.resourceResults);
@@ -488,29 +552,35 @@ export function calculateCapacity(
 }
 
 /**
- * Quickly compute weekly throughput for a given config.
- * Runs the same grid search over all (visitDayOffsets, lzAnlegenDay) combos
- * as calculateCapacity, but skips the expensive scheduler validation.
- * Used for sensitivity analysis where many configs are compared.
+ * Weekly throughput for a given config — identical to
+ * `calculateCapacity(...).weeklyThroughput` (including scheduler validation),
+ * so sensitivity analyses match the dashboard value.
  */
 export function computeQuickThroughput(
   rawExaminations: Examination[],
   resourceGroups: ResourceGroup[],
   config: ResourceConfig,
 ): number {
-  const programDays = config.scheduleConfig.programDays ?? 3;
-  const examinations = applyProgramDays(rawExaminations, programDays);
-  const allSteps = resolveSteps(examinations);
-  let bestN = 0;
+  return calculateCapacity(rawExaminations, resourceGroups, config).weeklyThroughput;
+}
 
-  for (const offsets of allVisitDayOffsets(programDays)) {
-    for (const lzDay of [1, 2] as const) {
-      const { globalMaxN } = computeAnalyticalCapacity(
-        examinations, resourceGroups, config, allSteps, offsets, lzDay,
-      );
-      if (globalMaxN > bestN) bestN = globalMaxN;
-    }
-  }
-
-  return bestN * config.scheduleConfig.startDays.length;
+/**
+ * Scenario with the automatically determined visit offsets / LZ day applied to
+ * its schedule config. Use this before feeding a scenario to the scheduler or
+ * Gantt, otherwise they run on the (unoptimised) stored defaults.
+ */
+export function applyBestSchedule(scenario: Scenario): Scenario {
+  const r = scenario.results;
+  if (!r) return scenario;
+  return {
+    ...scenario,
+    resourceConfig: {
+      ...scenario.resourceConfig,
+      scheduleConfig: {
+        ...scenario.resourceConfig.scheduleConfig,
+        lzAnlegenDay: r.bestLzAnlegenDay,
+        visitDayOffsets: r.bestVisitDayOffsets,
+      },
+    },
+  };
 }

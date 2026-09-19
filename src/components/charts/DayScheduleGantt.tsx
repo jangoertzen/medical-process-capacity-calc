@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
-import type { Scenario, Weekday, DayNumber } from '@/types'
+import type { Scenario, Weekday, DayNumber, TimeInterval } from '@/types'
 import { buildWeekSchedule, type ScheduledExam, type WeekdaySchedule } from '@/lib/scheduler'
+import { toClockMin } from '@/lib/calculator'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -18,16 +19,11 @@ const STAGE_LABEL: Record<DayNumber, string> = { 1: 'Tag 1', 2: 'Tag 2', 3: 'Tag
 const STAGE_BG: Record<DayNumber, string> = { 1: '#eff6ff', 2: '#f0fdf4', 3: '#fefce8' }
 const STAGE_ROW_ALT: Record<DayNumber, string> = { 1: '#e0f2fe', 2: '#dcfce7', 3: '#fef9c3' }
 
-/** Colors for exam blocks in patient view (keyed by resourceGroupId) */
-const GROUP_COLORS: Record<string, { bg: string; text: string }> = {
-  'funktionsraum-tag1': { bg: '#3b82f6', text: '#fff' },
-  'arzt-sono':          { bg: '#10b981', text: '#fff' },
-  'arzt-sprechzeit':    { bg: '#f59e0b', text: '#fff' },
-  'mfa-kapazitat':      { bg: '#ef4444', text: '#fff' },
-  'langzeit-ekg':       { bg: '#8b5cf6', text: '#fff' },
-  'langzeit-rr':        { bg: '#6366f1', text: '#fff' },
-  'ergometrie':         { bg: '#f97316', text: '#fff' },
-}
+/** Colors for exam blocks in patient view, assigned by the group's position in the scenario */
+const GROUP_PALETTE = [
+  '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#6366f1', '#f97316',
+  '#14b8a6', '#ec4899', '#84cc16', '#0ea5e9', '#a855f7',
+].map(bg => ({ bg, text: '#fff' }))
 const DEFAULT_COLOR = { bg: '#94a3b8', text: '#fff' }
 
 /** Colors for patient blocks in room view (keyed by stage) */
@@ -40,7 +36,6 @@ const STAGE_COLOR: Record<DayNumber, { bg: string; text: string }> = {
 /** Preferred room display order */
 const ROOM_ORDER = ['Labor', 'Funktionsraum', 'Geräteraum', 'Sono', 'Sprechzimmer', 'Ergometrieraum']
 
-const START_HOUR = 8       // day starts at 08:00
 const PX_PER_MIN = 3       // 3 px/min → 360 min = 1080 px
 const ROW_HEIGHT = 30      // px per patient/room row
 const LABEL_WIDTH = 110    // px for the left label column
@@ -50,11 +45,15 @@ const TIME_HEADER = 28     // px for the time axis header
 // Helpers
 // ---------------------------------------------------------------------------
 
-function fmtTime(minutes: number): string {
-  const total = START_HOUR * 60 + minutes
-  const h = Math.floor(total / 60)
-  const m = total % 60
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+/** Formats minutes-since-opening as a clock time using the day's opening intervals. */
+type FmtTime = (minutes: number, asEnd?: boolean) => string
+
+function hhmm(total: number): string {
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
+}
+
+function makeFmtTime(intervals: TimeInterval[]): FmtTime {
+  return (minutes, asEnd = false) => hhmm(toClockMin(intervals, minutes, asEnd))
 }
 
 // ---------------------------------------------------------------------------
@@ -201,8 +200,17 @@ interface GanttRow {
   blocks: GanttBlock[]
 }
 
-function GanttChart({ rows, openingMinutes }: { rows: GanttRow[]; openingMinutes: number }) {
+function GanttChart({ rows, openingMinutes, intervals, fmtTime }: {
+  rows: GanttRow[]; openingMinutes: number; intervals: TimeInterval[]; fmtTime: FmtTime
+}) {
   const chartWidth = openingMinutes * PX_PER_MIN
+  // Positions on the timeline where a closed gap (e.g. lunch break) lies
+  const gaps: number[] = []
+  intervals.reduce((acc, iv, i) => {
+    const end = acc + Math.max(0, iv.endMin - iv.startMin)
+    if (i < intervals.length - 1) gaps.push(end)
+    return end
+  }, 0)
   const chartHeight = rows.length * ROW_HEIGHT
 
   // Time tick marks every 30 min
@@ -285,6 +293,14 @@ function GanttChart({ rows, openingMinutes }: { rows: GanttRow[]; openingMinutes
                   zIndex: 0,
                 }}
               />
+            ))}
+
+            {/* Closed gaps between opening intervals */}
+            {gaps.map(g => (
+              <div key={`gap-${g}`} title="Praxis geschlossen" style={{
+                position: 'absolute', left: g * PX_PER_MIN - 1, top: 0, bottom: 0, width: 3,
+                background: '#f87171', zIndex: 2, opacity: 0.7,
+              }} />
             ))}
 
             {/* Row backgrounds */}
@@ -385,6 +401,13 @@ export function DayScheduleGantt({ scenario, nPatients }: Props) {
     return <div style={{ color: '#64748b', padding: '1rem' }}>Keine aktiven Phasen konfiguriert.</div>
   }
 
+  const groupColor = (groupId: string) => {
+    const idx = scenario.resourceGroups.findIndex(g => g.id === groupId)
+    return idx < 0 ? DEFAULT_COLOR : GROUP_PALETTE[idx % GROUP_PALETTE.length]
+  }
+  const intervals = scenario.resourceConfig.openingHours[currentSchedule.weekday]
+  const fmtTime = makeFmtTime(intervals)
+
   // Build view-specific rows
   const ganttRows: GanttRow[] = viewMode === 'patient'
     ? buildPatientRows(currentSchedule).map(row => ({
@@ -393,14 +416,14 @@ export function DayScheduleGantt({ scenario, nPatients }: Props) {
         bg: STAGE_BG[row.stage],
         altBg: STAGE_ROW_ALT[row.stage],
         blocks: row.exams.map(exam => {
-          const c = GROUP_COLORS[exam.primaryGroupId] ?? DEFAULT_COLOR
+          const c = groupColor(exam.primaryGroupId)
           const names = exam.items.map(i => i.name).join(' + ')
           const rooms = [...new Set(exam.items.map(i => i.room))].join(', ')
           return {
             startMin: exam.startMin,
             endMin: exam.endMin,
             label: exam.items[0].name.split(' ').slice(0, 2).join(' '),
-            tooltip: `${names}\n${fmtTime(exam.startMin)} – ${fmtTime(exam.endMin)} (${exam.endMin - exam.startMin} min)\nRaum: ${rooms}`,
+            tooltip: `${names}\n${fmtTime(exam.startMin)} – ${fmtTime(exam.endMin, true)} (${exam.endMin - exam.startMin} min)\nRaum: ${rooms}`,
             bg: c.bg,
             textColor: c.text,
           }
@@ -426,7 +449,7 @@ export function DayScheduleGantt({ scenario, nPatients }: Props) {
               startMin: entry.startMin,
               endMin: entry.endMin,
               label: entry.name.split(' ').slice(0, 2).join(' '),
-              tooltip: `${entry.name}\n${fmtTime(entry.startMin)} – ${fmtTime(entry.endMin)} (${entry.endMin - entry.startMin} min)\nPatient: ${entry.patientId}`,
+              tooltip: `${entry.name}\n${fmtTime(entry.startMin)} – ${fmtTime(entry.endMin, true)} (${entry.endMin - entry.startMin} min)\nPatient: ${entry.patientId}`,
               bg: c.bg,
               textColor: c.text,
             }
@@ -535,28 +558,24 @@ export function DayScheduleGantt({ scenario, nPatients }: Props) {
         flexWrap: 'wrap',
       }}>
         <span><strong style={{ color: '#1e293b' }}>{WD_LABELS[currentSchedule.weekday]}</strong></span>
-        <span>Öffnungszeit: {fmtTime(0)} – {fmtTime(openingMinutes)}</span>
+        <span>Öffnungszeit: {intervals.map(iv => `${hhmm(iv.startMin)} – ${hhmm(iv.endMin)}`).join(' · ') || '—'}</span>
         <span>Aktive Phasen: {[...activeStages].sort().map(s => STAGE_LABEL[s]).join(', ')}</span>
         <span>{nPatients} Patient{nPatients !== 1 ? 'en' : ''}/Kohorte</span>
         <span style={{ color: '#94a3b8' }}>Überfahren Sie Blöcke für Details</span>
       </div>
 
       {/* Gantt chart */}
-      <GanttChart rows={ganttRows} openingMinutes={openingMinutes} />
+      <GanttChart rows={ganttRows} openingMinutes={openingMinutes} intervals={intervals} fmtTime={fmtTime} />
 
       {/* Legend */}
       <div style={{ display: 'flex', gap: '0.5rem 1rem', flexWrap: 'wrap', fontSize: '0.75rem' }}>
         {viewMode === 'patient'
-          ? Object.entries(GROUP_COLORS).map(([groupId, color]) => {
-              const group = scenario.resourceGroups.find(g => g.id === groupId)
-              if (!group) return null
-              return (
-                <div key={groupId} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                  <div style={{ width: 12, height: 12, borderRadius: 2, background: color.bg, flexShrink: 0 }} />
-                  <span style={{ color: '#64748b' }}>{group.name}</span>
-                </div>
-              )
-            })
+          ? scenario.resourceGroups.map(group => (
+              <div key={group.id} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                <div style={{ width: 12, height: 12, borderRadius: 2, background: groupColor(group.id).bg, flexShrink: 0 }} />
+                <span style={{ color: '#64748b' }}>{group.name}</span>
+              </div>
+            ))
           : ([1, 2, 3] as DayNumber[]).map(stage => (
               <div key={stage} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
                 <div style={{ width: 12, height: 12, borderRadius: 2, background: STAGE_COLOR[stage].bg, flexShrink: 0 }} />

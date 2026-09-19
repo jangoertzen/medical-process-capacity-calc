@@ -180,6 +180,28 @@ export default function Ressourcen() {
             </div>
           </div>
           <div>
+            <label style={labelS}>Programmdauer</label>
+            <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.25rem' }}>
+              {([3, 2] as const).map(d => {
+                const active = (scheduleConfig.programDays ?? 3) === d
+                return (
+                  <button key={d} onClick={() => updateScheduleConfig({ programDays: d })} style={{
+                    padding: '0.3rem 0.65rem', borderRadius: '6px', cursor: 'pointer', fontSize: '0.82rem',
+                    border: `1px solid ${active ? '#3b82f6' : '#cbd5e1'}`,
+                    background: active ? '#eff6ff' : '#f8fafc',
+                    color: active ? '#1d4ed8' : '#94a3b8',
+                    fontWeight: active ? 700 : 400,
+                  }}>
+                    {d} Tage
+                  </button>
+                )
+              })}
+            </div>
+            <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '0.3rem' }}>
+              Bei 2 Tagen wandern alle Tag-3-Untersuchungen auf Tag 2.
+            </div>
+          </div>
+          <div>
             <label style={labelS}>Langzeit-Gerät anlegen</label>
             <div style={{
               padding: '0.35rem 0.8rem', borderRadius: '6px', fontSize: '0.82rem',

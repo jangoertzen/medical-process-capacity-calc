@@ -48,17 +48,22 @@ Der Tagesplan-Tab visualisiert den geplanten Ablauf eines Besuchstages mit allen
 
 ## Features
 
-- **Drag & Drop Tagesplan**: Untersuchungen per Maus zwischen Tag 1 / 2 / 3 verschieben und innerhalb eines Tages sortieren
-- **Vollständiges CRUD für Untersuchungen**: Neue Untersuchungen anlegen, bearbeiten, löschen; Abhängigkeiten ("folgt nach") konfigurieren
-- **Beteiligungsquote pro Untersuchung**: Für jede Untersuchung einzeln einstellbar, bei wie viel Prozent der Patienten sie stattfindet (z. B. 60 % für LZ-EKG)
-- **Flexible Öffnungszeiten**: Mehrere Zeitintervalle pro Tag (Vor- und Nachmittagszeiten), Eingabe als HH:MM
-- **Gerätekonfiguration im Untersuchungsreiter**: Anzahl der Geräte/Räume direkt bei der jeweiligen Ressourcengruppe
+- **Drag & Drop Tagesplan**: Untersuchungen per Maus zwischen Tag 1 / 2 / 3 verschieben und innerhalb eines Tages sortieren (die Reihenfolge dient dem Scheduler als Tie-Breaker)
+- **Vollständiges CRUD für Untersuchungen**: anlegen, bearbeiten, löschen; Parallelisierung („parallel mit“), Abhängigkeit („folgt nach“) und Ressourcengruppe pro Untersuchung
+- **Patientenanteil pro Untersuchung**: einstellbar, bei wie viel Prozent der Patienten sie stattfindet (z. B. 60 % für LZ-EKG) (wirkt in Rechnung und Tagesplan)
+- **Sonderverhalten per Datenfeld statt per Name**: „Gerätezyklus“ (anlegen/abnehmen bei Gerätegruppen), „Immer zuletzt“ und das bediende Personal je Personalgruppe sind in der UI einstellbar; Untersuchungen und Gruppen dürfen frei umbenannt werden
+- **Flexible Öffnungszeiten**: mehrere Zeitintervalle pro Tag, Eingabe als HH:MM (Untersuchungen überspannen keine Schließzeit; der Tagesplan zeigt echte Uhrzeiten, siehe [Grenzen](docs/FUNKTIONSWEISE.md#8-bekannte-grenzen-und-fallstricke))
+- **Gerätekonfiguration** im Reiter Untersuchungen (Panel „Ressourcengruppen konfigurieren“), Personal im Reiter Ressourcen
+- **Patientenplan**: Kohortenstart-Wochentage, 2- oder 3-Tage-Programm, maximale Verweildauer pro Besuchstag, optional 5 min Pause zwischen Untersuchungen
+- **Umsatzoptimierung** (Menü „Optimierung“): schlägt vor, bei wie viel Prozent der Patienten jede Untersuchung stattfinden sollte, damit der Wochenumsatz unter den Kapazitäten maximal wird; mit Nachfrage-Obergrenze, Min./Max. je Untersuchung, Übernahme als neues Szenario (siehe [Funktionsweise](docs/FUNKTIONSWEISE.md#10-umsatzoptimierung))
+- **Automatische Optimierung**: Besuchsabstände (Tag 1→2, Tag 1→3) und der Tag zum Anlegen der Langzeitgeräte werden vom Rechner gewählt
 - **3-Wochen-Kapazitätsmodell**: Woche 1 (Anlauf), Woche 2 (Steady State, bindend), Woche 3 (Auslauf)
-- **Engpassanalyse**: Identifiziert automatisch die limitierende Ressource
-- **Szenario-Vergleich**: Mehrere Konfigurationen parallel verwalten und gegenüberstellen
-- **Sensitivitätsanalyse**: Diagramme für Geräte- und Personalvariationen
-- **Gantt-Tagesplan**: Simulierter Ablauf eines Besuchstages
-- **Export-fähig**: Vollständige Neuberechnung bei jeder Parameteränderung, keine manuellen Refreshs nötig
+- **Engpassanalyse per Sensitivität**: Für jede Ressource wird „+1 Einheit“ simuliert; alle mit Durchsatzgewinn gelten als Engpass
+- **Kennzahlen**: Wochendurchsatz, Patienten pro Kohorte, extrapolierter Monatsumsatz, Wartezeitverursacher (Ø Wartezeit pro Patient)
+- **Szenario-Vergleich**: mehrere Konfigurationen verwalten, zwei davon gegenüberstellen (Durchsatz, Umsatz, Wartezeit, Auslastung)
+- **Diagramme**: Sensitivitätskurven je Ressource und Gantt-Tagesplan (Patienten- und Raumansicht)
+- **Import / Export**: alle Szenarien als JSON sichern und wieder einspielen (ersetzt den kompletten Stand)
+- **Live-Berechnung**: jede Parameteränderung löst sofort eine Neuberechnung aus
 
 ---
 
@@ -70,7 +75,9 @@ Der Tagesplan-Tab visualisiert den geplanten Ablauf eines Besuchstages mit allen
 | `staff_multiplied` | `⌊Personal × Öffnungsminuten / Gesamtbedarf pro Patient⌋` | Arzt-Sprechzeit, MFA-Kapazität |
 | `device_count` | `⌊Geräteanzahl / Beteiligungsquote⌋` | Langzeit-EKG, Langzeit-RR |
 
-Die optimalen Besuchsabstände (Tag-2-Abstand, Tag-3-Abstand, LZ-Anlegen-Tag) werden automatisch berechnet — das System wählt die Kombination mit der höchsten Kapazität.
+Die optimalen Besuchsabstände (Tag-2-Abstand, Tag-3-Abstand, LZ-Anlegen-Tag) werden automatisch berechnet — das System wählt die Kombination mit der höchsten Kapazität. Danach prüft ein Scheduler, ob der Tagesplan wirklich in die Öffnungszeiten passt, und senkt die Patientenzahl pro Kohorte bei Bedarf.
+
+**Ausführliche Erklärung** (Modell, Formeln, Scheduler, Rechenbeispiel, bekannte Grenzen): [docs/FUNKTIONSWEISE.md](docs/FUNKTIONSWEISE.md)
 
 ---
 
@@ -83,7 +90,7 @@ defaultData.ts  →  appStore.ts  →  calculator.ts  →  UI-Komponenten
                                      (Tagesplanung)
 ```
 
-- **State** lebt vollständig in `src/store/appStore.ts` (Zustand + immer, persistiert in `localStorage`)
+- **State** lebt vollständig in `src/store/appStore.ts` (Zustand + immer, persistiert in `localStorage` unter `process-calc-v18`)
 - **Jede Parameteränderung** löst sofort eine Neuberechnung aus (`calculateCapacity()`)
 - **Keine Backend-Abhängigkeit** — läuft vollständig im Browser
 
@@ -92,22 +99,26 @@ defaultData.ts  →  appStore.ts  →  calculator.ts  →  UI-Komponenten
 ```
 src/
   data/         # Standarddaten (Untersuchungen, Ressourcengruppen)
-  lib/          # Kapazitätsrechner (calculator.ts) und Scheduler (scheduler.ts)
-  pages/        # Dashboard, Untersuchungen, Ressourcen, Szenarien, Diagramme
-  components/   # Charts, Layout (Sidebar), Szenario-Vergleich
+  lib/          # Kapazitätsrechner (calculator.ts), Scheduler (scheduler.ts), Umsatzoptimierer (optimizer.ts), Datenmigration (normalize.ts)
+  pages/        # Dashboard, Untersuchungen, Ressourcen, Szenarien, Diagramme, Import/Export
+  components/   # Charts (Gantt, Sensitivität), Dashboard-Bausteine, Layout, Szenario-Vergleich
   store/        # Zustand-Store mit allen Aktionen
   types/        # TypeScript-Interfaces
+docs/           # Funktionsweise (FUNKTIONSWEISE.md) und Screenshots
+scripts/        # take-screenshots.mjs (Puppeteer, erzeugt docs/screenshots)
 ```
+
+Der Router ist pfadbasiert (`/dashboard`, `/untersuchungen`, `/ressourcen`, `/szenarien`, `/diagramme`, `/optimierung`, `/import-export`).
 
 ---
 
 ## Tech Stack
 
-- **React 19** + TypeScript
+- **React 19** + TypeScript, **react-router-dom 7**
 - **Zustand 5** (State Management mit immer + localStorage-Persistenz)
 - **@dnd-kit/core + @dnd-kit/sortable** (Drag & Drop)
-- **Vite** + **Tailwind CSS v4**
-- Keine externen Chart-Libraries — Gantt und Balkendiagramme sind custom SVG/DOM
+- **recharts** (Sensitivitätsdiagramme); der Gantt-Tagesplan ist eigener DOM-Code
+- **Vite** + **Tailwind CSS v4** (Komponenten nutzen überwiegend Inline-Styles)
 
 ---
 
@@ -117,17 +128,19 @@ src/
 npm install
 npm run dev        # Dev-Server auf http://localhost:5173
 npm run build      # TypeScript-Check + Vite-Build
-npm run lint       # ESLint
 npm run preview    # Produktions-Build vorschauen
 ```
+
+Hinweise: Es gibt keine automatisierten Tests; als Prüfung dienen `npm run lint` und `npx tsc -b`. Für neue Screenshots die App laufen lassen (Port 5173) und `node scripts/take-screenshots.mjs` ausführen.
 
 ---
 
 ## Hinweise
 
 - Die App ist für den **internen Praxisbetrieb** konzipiert, nicht für den öffentlichen Einsatz.
-- Alle Daten bleiben lokal im Browser (`localStorage`). Es werden keine Daten an externe Server übertragen.
-- Beim ersten Start werden Standardwerte geladen, die direkt angepasst werden können.
+- Alle Daten bleiben lokal im Browser (`localStorage`). Es werden keine Daten an externe Server übertragen. Sicherung und Übertragung auf einen anderen Rechner: Seite **Import / Export**.
+- Beim ersten Start werden Standardwerte geladen (Basis-Szenario: 4 Patienten pro Kohorte, 20 Check-ups/Woche; Engpass sind die Langzeitgeräte).
+- `Checkup_Engpassanalyse_einfach.xlsx` ist das ursprüngliche, einfache Excel-Modell (Slots pro Tag), aus dem die Standarddaten stammen. Die App ersetzt es; keine Code-Abhängigkeit.
 
 ---
 
