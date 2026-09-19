@@ -13,6 +13,7 @@ const PAGES = [
   { url: '/szenarien',       file: 'szenarien.png',       waitFor: 1500 },
   { url: '/diagramme',       file: 'diagramme.png',       waitFor: 2000 },
   { url: '/optimierung',     file: 'optimierung.png',     waitFor: 1500 },
+  { url: '/tagesgeschaeft',  file: 'tagesgeschaeft.png',  waitFor: 1500 },
 ];
 
 const browser = await puppeteer.launch({

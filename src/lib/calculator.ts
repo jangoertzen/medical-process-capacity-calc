@@ -109,6 +109,28 @@ export function getStaffCount(group: ResourceGroup, staff: ResourceConfig['staff
 // Time per patient for a resource group × specific patient stage
 // ---------------------------------------------------------------------------
 
+/** Minutes per day a time_based / staff_multiplied group can work (units × opening minutes). */
+export function groupCapacityMinutes(
+  group: ResourceGroup,
+  staff: ResourceConfig['staff'],
+  openingMinutes: number,
+): number {
+  const units = group.groupType === 'staff_multiplied' ? getStaffCount(group, staff) : (group.deviceCount ?? 1);
+  return units * openingMinutes;
+}
+
+/** Appointments per day that are held free for the daily business (0 when it is switched off). */
+export function reservedAppointments(config: ResourceConfig, weekday: Weekday): number {
+  const db = config.dailyBusiness;
+  if (!db?.enabled) return 0;
+  return db.reservedPerDay?.[weekday] ?? db.appointmentsPerDay[weekday] * (1 + db.fluctuationPercent / 100);
+}
+
+/** Minutes of a group held free for the daily business on a weekday. */
+export function reservedMinutes(config: ResourceConfig, groupId: string, weekday: Weekday): number {
+  return reservedAppointments(config, weekday) * (config.dailyBusiness?.minutesPerAppointment[groupId] ?? 0);
+}
+
 /** Device cycle: exam that hands out the device (counts on the lzAnlegenDay visit) */
 export function isDeviceAttach(exam: Examination): boolean {
   return exam.deviceRole === 'attach';
@@ -242,12 +264,9 @@ function computeDayResources(
       );
       if (timePerPatientMin === 0) continue;
 
-      if (group.groupType === 'time_based') {
-        const mult = group.deviceCount ?? 1;
-        rawCapacity = (mult * openingMinutes) / timePerPatientMin;
-      } else {
-        rawCapacity = (getStaffCount(group, staff) * openingMinutes) / timePerPatientMin;
-      }
+      // Daily business holds part of the day's capacity free (blocked for check-ups)
+      const available = Math.max(0, groupCapacityMinutes(group, staff, openingMinutes) - reservedMinutes(config, group.id, weekday));
+      rawCapacity = available / timePerPatientMin;
       limitingCapacity = Math.floor(rawCapacity);
     }
 

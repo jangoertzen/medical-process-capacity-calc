@@ -86,10 +86,33 @@ export interface ScheduleConfig {
   breakBetweenExams: boolean;
 }
 
+/**
+ * Daily business ("Tagesgeschäft"): regular patient appointments running next to the check-ups.
+ * They occupy time of the same resources, so they reduce the capacity left for check-ups.
+ */
+export interface DailyBusinessConfig {
+  /** Switch: when off, the model behaves as if there were no daily business */
+  enabled: boolean;
+  /** Demand: average number of appointments per weekday */
+  appointmentsPerDay: Record<Weekday, number>;
+  /** Day-to-day fluctuation of the demand in percent (peak day = average × (1 + this/100)) */
+  fluctuationPercent: number;
+  /** Revenue per appointment in EUR */
+  valuePerAppointmentEur: number;
+  /** Minutes one appointment occupies per resource group id (0 or missing = not used) */
+  minutesPerAppointment: Record<string, number>;
+  /**
+   * Appointments per weekday for which capacity is held free (blocked for check-ups).
+   * Missing = hold free for the peak demand: appointmentsPerDay × (1 + fluctuation).
+   */
+  reservedPerDay?: Partial<Record<Weekday, number>>;
+}
+
 export interface ResourceConfig {
   openingHours: OpeningHours;
   staff: StaffConfig;
   scheduleConfig: ScheduleConfig;
+  dailyBusiness?: DailyBusinessConfig;
 }
 
 export interface ResourceCapacityResult {

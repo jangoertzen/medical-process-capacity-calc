@@ -9,6 +9,7 @@ import Szenarien from '@/pages/Szenarien'
 import Diagramme from '@/pages/Diagramme'
 import ImportExport from '@/pages/ImportExport'
 import Optimierung from '@/pages/Optimierung'
+import Tagesgeschaeft from '@/pages/Tagesgeschaeft'
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null }
@@ -47,6 +48,7 @@ export default function App() {
                 <Route path="/szenarien" element={<Szenarien />} />
                 <Route path="/diagramme" element={<Diagramme />} />
                 <Route path="/optimierung" element={<Optimierung />} />
+                <Route path="/tagesgeschaeft" element={<Tagesgeschaeft />} />
                 <Route path="/import-export" element={<ImportExport />} />
               </Routes>
             </ErrorBoundary>

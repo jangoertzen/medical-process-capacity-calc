@@ -50,7 +50,7 @@ defaultData.ts ──► appStore.ts ──► calculator.ts ──► Seiten/Ko
 |---|---|
 | `Examination` | Eine Untersuchung: Tag (1/2/3), Dauer, Rolle (MFA/Arzt), Raum, Ressourcengruppe, **Patientenanteil** (`participationPercent`), Umsatz, `parallelWith` (Name der Partner-Untersuchung), `order`, `mustFollowExamId`, `deviceRole` (`attach`/`return`, nur in Gerätegruppen), `scheduleLast` (immer zuletzt), `participationMin`/`participationMax` (Grenzen für die Umsatzoptimierung) |
 | `ResourceGroup` | Ein gemeinsamer Engpass (z. B. „Ultraschall“). `groupType` bestimmt die Formel, `deviceCount` die Anzahl Geräte/Räume, `staffType` (nur `staff_multiplied`) das bedienende Personal |
-| `ResourceConfig` | `openingHours` (Intervalle pro Wochentag), `staff` (Ärzte, MFA Funktionsdiagnostik, MFA Labor), `scheduleConfig` |
+| `ResourceConfig` | `openingHours` (Intervalle pro Wochentag), `staff` (Ärzte, MFA Funktionsdiagnostik, MFA Labor), `scheduleConfig`, `dailyBusiness` (Tagesgeschäft, siehe Abschnitt 11) |
 | `ScheduleConfig` | `startDays`, `programDays` (2 oder 3), `maxStayMinutes`, `breakBetweenExams`; außerdem `visitDayOffsets` und `lzAnlegenDay`, die der Rechner **selbst überschreibt** (siehe 4.4) |
 | `Scenario` | Untersuchungen + Gruppen + Konfiguration + berechnetes `results` |
 | `WeeklyCapacityResult` | Ergebnis: `maxPatientsPerCohort`, `weeklyThroughput`, Ergebnisse je Wochentag, 3-Wochen-Daten, beste Besuchsabstände |
@@ -249,3 +249,52 @@ Die Langzeitgeräte sind der wertvollste Engpass: Bei 4 Geräten und 60 % Teilna
 **Grenzen:** Die Nachfrage-Obergrenze muss der Nutzer schätzen. Es gibt keinen Wechselwirkungseffekt zwischen Angebot und Preis. Medizinische Zusammenhänge zwischen Untersuchungen (z. B. dass Untersuchung B nur mit A sinnvoll ist) kennt der Optimierer nicht; solche Fälle über Min./Max. abbilden. „Folgt nach“ wirkt nur im Tagesplan, nicht als Abhängigkeit der Anteile.
 
 **Übernehmen:** *Als neues Szenario übernehmen* legt eine Kopie des aktuellen Szenarios („Optimiert (max. N Pat./Wo.)“) an und setzt die Anteile dort (empfohlen; das Basisszenario bleibt unverändert). *In aktuelles Szenario übernehmen* überschreibt die Anteile im aktiven Szenario. Jede Änderung am Szenario, auch an Min./Max., macht ein angezeigtes Ergebnis ungültig; dann erneut starten.
+
+---
+
+## 11. Tagesgeschäft
+
+Menüpunkt **Tagesgeschäft** (`src/pages/Tagesgeschaeft.tsx`, Logik in `src/lib/dailyBusiness.ts`, Wirkung auf die Kapazität in `calculator.ts`). Neben den Check-ups laufen reguläre Patiententermine (je 15 Minuten). Sie belegen dieselben Ressourcen und nehmen den Check-ups Kapazität weg.
+
+**Einstellungen** (je Szenario, `resourceConfig.dailyBusiness`)
+
+| Feld | Bedeutung |
+|---|---|
+| Schalter `enabled` | Aus (Standard): Das Modell ignoriert das Tagesgeschäft, alle Ergebnisse bleiben wie ohne diese Funktion. An: Die freigehaltenen Termine verringern die Check-up-Kapazität überall (Dashboard, Diagramme, Optimierung). |
+| Termine pro Tag | Nachfrage (Durchschnitt), je Wochentag ein Wert |
+| Schwankung in % | Spitzentag = Durchschnitt × (1 + Schwankung) |
+| Wert je Patiententermin | Umsatz je Termin in € |
+| Minuten je Termin und Ressource | Wie lange ein Termin welche Ressourcengruppe belegt (0 = gar nicht). Standard: Arztgespräch 15 Minuten. Ärzte, MFA und Ultraschall sind einzeln einstellbar, indem du bei der jeweiligen Gruppe (z. B. Arztgespräch, Blutentnahmen, Ultraschall) Minuten einträgst. |
+| Freihalten je Wochentag (optional) | Termine pro Tag, für die Kapazität freigehalten (blockiert) wird. Leer = Spitzentag. |
+
+**Wirkung im Modell.** Für jede Ressourcengruppe und jeden Wochentag gilt:
+
+```
+Kapazität für Check-ups = ⌊ (Einheiten × Öffnungsminuten − freigehaltene Termine × Minuten je Termin) ÷ Zeitbedarf je Patient ⌋
+```
+
+Der Scheduler bleibt unverändert; er plant nur Check-ups. Die Slot-Ansicht (unten) macht die Verteilung über den Tag sichtbar.
+
+**Schwankung.** Die Nachfrage `D` eines Tages ist gleichverteilt zwischen `Ø × (1 − s)` und `Ø × (1 + s)`. Werden `r` Termine freigehalten, sind im Erwartungswert `E[min(D, r)]` Termine belegt (geschlossene Formel, gegen eine Monte-Carlo-Simulation geprüft). Wer für den Spitzentag freihält (`r = Ø × (1 + s)`), bedient jede Nachfrage, bekommt im Mittel aber nur `Ø` Termine bezahlt.
+
+**Empfehlung (optimale Terminzahl).** Gemeinsam gewählt werden die Zahl der Check-up-Patienten je Kohorte `N` und die freigehaltenen Termine `r` je Wochentag (höchstens der Spitzentag), so dass der Wochenumsatz maximal ist:
+
+```
+Wochenumsatz = N × Starttage × Umsatz je Check-up + Σ Wochentage (Wert je Termin × E[min(D, r)])
+```
+
+Zu jedem `N` ist `r` die größte Zahl, die neben `N` Check-up-Patienten in allen belegten Ressourcen noch Platz hat. Die Suche läuft über alle `N` von 0 bis zur Kapazität ohne Tagesgeschäft. Das Ergebnis wird mit dem vollen Modell (`calculateCapacity`) nachgerechnet. Die Seite vergleicht drei Varianten: nur Check-ups, aktuelle Einstellung (Spitzentag oder eigene Werte) und Empfehlung. *Empfehlung übernehmen* schreibt die Werte in „Freihalten“ und schaltet das Tagesgeschäft ein.
+
+**Wann und wo blockieren (Slot-Ansicht).** Aus dem Tagesplan der Steady-State-Woche wird je Wochentag und 15-Minuten-Slot berechnet, wie viele Termine neben den Check-ups noch Platz haben (frei = Einheiten × Slotlänge − Check-up-Belegung, geteilt durch die Minuten je Termin, das Minimum über alle belegten Ressourcen). Rot = durch Check-ups belegt, gelb = teilweise frei, grün = frei. Die freizuhaltenden Termine werden proportional zum freien Platz auf die Slots verteilt (Zahl im Feld, grüner Rahmen). Rechts steht „Freihalten / Platz“; wird die Zahl rot, passt die geforderte Reservierung an diesem Tag nicht in die freien Slots.
+
+**Beispiel (Standardwerte, Ultraschall 15 Minuten je Termin, 45 € je Termin, Nachfrage 40/40/30/40/30, Schwankung 20 %).**
+
+| Variante | Check-ups/Woche | Termine/Woche (erwartet) | Umsatz/Woche |
+|---|---|---|---|
+| Nur Check-ups | 20 | 0 | 10.500 € |
+| Spitzentag freihalten (48/48/36/48/36) | 0 | 180 | 8.100 € |
+| Empfehlung (14/14/6/14/10) | 20 | 58 | 13.110 € |
+
+Der Ultraschall (ein Gerät, 360 Minuten) ist der gemeinsame Engpass: Wer für jeden Spitzentermin Ultraschall freihält, verdrängt alle Check-ups. Die Slot-Ansicht der Empfehlung zeigt, dass die Check-ups den Ultraschall am Montag von 08:15 bis 10:45 belegen; freigehalten wird um 08:00 und ab 10:45. Mit nur Arztzeit (Standard) entsteht kein Konflikt, weil 5 Ärzte weit mehr Zeit haben, als Check-ups und Termine brauchen.
+
+**Grenzen.** Die Nachfrage und der Wert je Termin sind Annahmen. Es wird keine Zeit vor Ort pro Termin modelliert außer den eingetragenen Minuten; jeder Termin belegt alle eingetragenen Ressourcen gemeinsam. Die Slot-Ansicht rechnet mit Bruchteilen eines Termins je Slot und ignoriert, dass kurze Check-up-Blöcke (5 oder 10 Minuten) einen 15-Minuten-Slot zerstückeln können. Ob die Empfehlung praktisch umsetzbar ist (z. B. Terminbuch-Software), prüft die App nicht. „Freihalten“ bedeutet Blockieren für Check-ups, nicht Ablehnen von Patienten. Die Umsatzoptimierung der Untersuchungen (Menü „Optimierung“) rechnet weiter nur den Check-up-Umsatz, nutzt aber bei eingeschaltetem Tagesgeschäft die verringerte Kapazität.

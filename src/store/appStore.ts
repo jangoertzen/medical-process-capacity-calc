@@ -14,6 +14,7 @@ import type {
   ScheduleConfig,
   DayNumber,
   TimeInterval,
+  DailyBusinessConfig,
 } from '@/types';
 import { defaultExaminations, defaultResourceGroups, defaultResourceConfig } from '@/data/defaultData';
 import { calculateCapacity } from '@/lib/calculator';
@@ -54,6 +55,7 @@ interface AppState {
   updateOpeningHours: (weekday: Weekday, intervals: TimeInterval[]) => void;
   updateStaff: (patch: Partial<StaffConfig>) => void;
   updateScheduleConfig: (patch: Partial<ScheduleConfig>) => void;
+  updateDailyBusiness: (patch: Partial<DailyBusinessConfig>) => void;
 
   updateResourceGroup: (groupId: string, patch: Partial<ResourceGroup>) => void;
   addResourceGroup: (group: Omit<ResourceGroup, 'id'>) => void;
@@ -188,6 +190,13 @@ export const useAppStore = create<AppState>()(
         const scenario = state.scenarios.find(s => s.id === state.activeScenarioId);
         if (!scenario) return;
         Object.assign(scenario.resourceConfig.scheduleConfig, patch);
+        scenario.results = calculateCapacity(scenario.examinations, scenario.resourceGroups, scenario.resourceConfig);
+      }),
+
+      updateDailyBusiness: (patch) => set(state => {
+        const scenario = state.scenarios.find(s => s.id === state.activeScenarioId);
+        if (!scenario?.resourceConfig.dailyBusiness) return;
+        Object.assign(scenario.resourceConfig.dailyBusiness, patch);
         scenario.results = calculateCapacity(scenario.examinations, scenario.resourceGroups, scenario.resourceConfig);
       }),
 

@@ -1,4 +1,5 @@
 import type { Scenario } from '@/types';
+import { defaultDailyBusiness } from '@/data/defaultData';
 
 /**
  * Fills the data fields that replaced name/id heuristics (Examination.deviceRole,
@@ -32,5 +33,18 @@ export function normalizeScenario(scenario: Scenario): Scenario {
     };
   });
 
-  return { ...scenario, examinations, resourceGroups };
+  // Daily business (added later): off by default, doctor groups get the default 15 min per appointment
+  const resourceConfig = scenario.resourceConfig.dailyBusiness
+    ? scenario.resourceConfig
+    : {
+        ...scenario.resourceConfig,
+        dailyBusiness: {
+          ...structuredClone(defaultDailyBusiness),
+          minutesPerAppointment: Object.fromEntries(
+            resourceGroups.filter(g => g.staffType === 'doctorCount').map(g => [g.id, 15]),
+          ),
+        },
+      };
+
+  return { ...scenario, examinations, resourceGroups, resourceConfig };
 }

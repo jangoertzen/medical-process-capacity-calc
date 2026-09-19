@@ -1,4 +1,4 @@
-import type { Examination, ResourceGroup, ResourceConfig } from '@/types';
+import type { Examination, ResourceGroup, ResourceConfig, DailyBusinessConfig } from '@/types';
 
 export const defaultExaminations: Examination[] = [
   // Day 1
@@ -89,6 +89,15 @@ export const defaultResourceGroups: ResourceGroup[] = [
   },
 ];
 
+/** Off by default; appointments occupy 15 min of doctor time. MFA and ultrasound minutes start at 0. */
+export const defaultDailyBusiness: DailyBusinessConfig = {
+  enabled: false,
+  appointmentsPerDay: { Mon: 40, Tue: 40, Wed: 30, Thu: 40, Fri: 30 },
+  fluctuationPercent: 20,
+  valuePerAppointmentEur: 45,
+  minutesPerAppointment: { 'arzt-sprechzeit': 15 },
+};
+
 export const defaultResourceConfig: ResourceConfig = {
   openingHours: {
     // Mon: 8:00–14:00 = 360 min
@@ -121,4 +130,5 @@ export const defaultResourceConfig: ResourceConfig = {
     // No break between exams by default
     breakBetweenExams: false,
   },
+  dailyBusiness: defaultDailyBusiness,
 };
