@@ -2,7 +2,9 @@ import { useState, useMemo } from 'react'
 import { useAppStore } from '@/store/appStore'
 import { DayScheduleGantt } from '@/components/charts/DayScheduleGantt'
 import { ResourceSensitivityChart, type SensitivityParam } from '@/components/charts/ResourceSensitivityChart'
-import { computeQuickThroughput } from '@/lib/calculator'
+import { computeQuickThroughput, applyBestSchedule } from '@/lib/calculator'
+
+const STAFF_LABEL = { doctorCount: 'Arztgespräch', mfaLabor: 'MFA Labor (Blutentnahmen)', mfaFunktionsdiagnostik: 'MFA Funktionsdiagnostik' } as const
 
 const TABS = [
   { id: 'sensitivitaet', label: 'Ressourcen-Analyse' },
@@ -25,16 +27,9 @@ export default function Diagramme() {
       if (!examinations.some(e => group.examinationIds.includes(e.id))) continue
 
       if (group.groupType === 'staff_multiplied') {
-        const groupExams = examinations.filter(e => group.examinationIds.includes(e.id))
-        let field: string, label: string, current: number
-
-        if (groupExams.some(e => e.staffRole === 'Arzt')) {
-          field = 'doctorCount'; label = 'Arztgespräch'; current = resourceConfig.staff.doctorCount
-        } else if (group.id === 'mfa-kapazitat') {
-          field = 'mfaLabor'; label = 'MFA Labor (Blutentnahmen)'; current = resourceConfig.staff.mfaLabor
-        } else {
-          field = 'mfaFunktionsdiagnostik'; label = 'MFA Funktionsdiagnostik'; current = resourceConfig.staff.mfaFunktionsdiagnostik
-        }
+        const field = group.staffType ?? 'mfaFunktionsdiagnostik'
+        const label = STAFF_LABEL[field]
+        const current = resourceConfig.staff[field]
 
         if (seenStaffFields.has(field)) continue
         seenStaffFields.add(field)
@@ -56,33 +51,27 @@ export default function Diagramme() {
         })
       } else {
         // time_based or device_count
-        // Combine Langzeit-EKG and Langzeit-RR into one chart (same device)
-        const lzGroupIds = ['langzeit-ekg', 'langzeit-rr']
-        if (lzGroupIds.includes(group.id)) {
-          if (seenStaffFields.has('langzeit')) continue
-          seenStaffFields.add('langzeit')
+        // All device_count groups share one device set: combine them into one chart
+        if (group.groupType === 'device_count') {
+          if (seenStaffFields.has('geraete')) continue
+          seenStaffFields.add('geraete')
 
-          const currentEkg = resourceGroups.find(g => g.id === 'langzeit-ekg')?.deviceCount ?? 4
-          const currentRr = resourceGroups.find(g => g.id === 'langzeit-rr')?.deviceCount ?? 4
-          const current = Math.min(currentEkg, currentRr)
+          const deviceGroups = resourceGroups.filter(g => g.groupType === 'device_count')
+          const current = Math.min(...deviceGroups.map(g => g.deviceCount ?? g.slotsPerDay))
 
           items.push({
-            id: 'langzeit',
-            label: 'Langzeit-Geräte (EKG + RR)',
+            id: 'geraete',
+            label: deviceGroups.map(g => g.name).join(' + '),
             xLabel: 'Anzahl Geräte',
             currentCount: current,
             compute: (n) => computeQuickThroughput(
               examinations,
-              resourceGroups.map(g =>
-                g.id === 'langzeit-ekg' || g.id === 'langzeit-rr'
-                  ? { ...g, deviceCount: n }
-                  : g
-              ),
+              resourceGroups.map(g => g.groupType === 'device_count' ? { ...g, deviceCount: n } : g),
               resourceConfig,
             ),
           })
         } else {
-          const defaultCount = group.deviceCount ?? (group.groupType === 'device_count' ? group.slotsPerDay : 1)
+          const defaultCount = group.deviceCount ?? 1
 
           items.push({
             id: group.id,
@@ -207,7 +196,7 @@ export default function Diagramme() {
       {activeTab === 'tagesplan' && (
         <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '1.5rem' }}>
           <DayScheduleGantt
-            scenario={activeScenario}
+            scenario={applyBestSchedule(activeScenario)}
             nPatients={Math.max(1, results.maxPatientsPerCohort)}
           />
         </div>

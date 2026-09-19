@@ -31,6 +31,17 @@ export interface Examination {
   mustFollowExamId: string | null;
   /** Percentage of patients (0–100) who receive this examination. Default: 100 */
   participationPercent: number;
+  /**
+   * Role in a device cycle (only meaningful in a `device_count` group):
+   * 'attach' = handing out the device (counts on the lzAnlegenDay visit),
+   * 'return' = taking it back (not scheduled; the device is assumed free the next day).
+   */
+  deviceRole?: 'attach' | 'return';
+  /** Always scheduled as the last exam of the patient's visit (e.g. Abschlussgespräch) */
+  scheduleLast?: boolean;
+  /** Bounds (0–100) for the revenue optimizer; default 0 and 100 */
+  participationMin?: number;
+  participationMax?: number;
 }
 
 export interface ResourceGroup {
@@ -42,6 +53,8 @@ export interface ResourceGroup {
   note?: string;
   /** Number of devices/rooms for this group (device_count and time_based groups) */
   deviceCount: number | null;
+  /** Which staff pool serves a `staff_multiplied` group (a key of StaffConfig) */
+  staffType?: keyof StaffConfig;
 }
 
 export interface StaffConfig {
@@ -88,6 +101,7 @@ export interface ResourceCapacityResult {
   timePerPatientMin: number;
   /** Max patients per cohort this resource alone can handle */
   limitingCapacity: number;
+  /** Unrounded capacity (patients per cohort); `limitingCapacity` is its floor */
   rawCapacity: number;
   isBottleneck: boolean;
   /** (globalMaxN / limitingCapacity) × 100 */

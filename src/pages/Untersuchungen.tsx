@@ -20,9 +20,16 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useAppStore } from '@/store/appStore'
-import type { DayNumber, Examination, ResourceGroup, ResourceGroupType } from '@/types'
+import type { DayNumber, Examination, ResourceGroup, ResourceGroupType, StaffConfig } from '@/types'
 
 const DAY_LABELS: Record<DayNumber, string> = { 1: 'Tag 1', 2: 'Tag 2', 3: 'Tag 3' }
+const STAFF_LABELS: Record<keyof StaffConfig, string> = {
+  doctorCount: 'Ärzte',
+  mfaFunktionsdiagnostik: 'MFA Funktionsdiagnostik',
+  mfaLabor: 'MFA Labor',
+}
+const DEVICE_ROLE_LABELS = { attach: 'Gerät anlegen', return: 'Gerät abnehmen' } as const
+
 const DAY_COLORS: Record<DayNumber, { bg: string; border: string; header: string }> = {
   1: { bg: '#eff6ff', border: '#bfdbfe', header: '#1d4ed8' },
   2: { bg: '#f0fdf4', border: '#bbf7d0', header: '#15803d' },
@@ -51,6 +58,9 @@ function AddExamModal({ day, resourceGroups, allExams, onClose, onAdd }: AddExam
   const [parallelWith, setParallelWith] = useState<string | null>(null)
   const [mustFollowExamId, setMustFollowExamId] = useState<string | null>(null)
   const [participationPercent, setParticipationPercent] = useState(100)
+  const [deviceRole, setDeviceRole] = useState<'attach' | 'return'>('attach')
+  const [scheduleLast, setScheduleLast] = useState(false)
+  const isDeviceGroup = resourceGroups.find(g => g.id === resourceGroupId)?.groupType === 'device_count'
 
   const maxOrder = allExams.filter(e => e.day === selectedDay).reduce((m, e) => Math.max(m, e.order), 0)
 
@@ -68,6 +78,8 @@ function AddExamModal({ day, resourceGroups, allExams, onClose, onAdd }: AddExam
       order: maxOrder + 1,
       mustFollowExamId,
       participationPercent,
+      deviceRole: isDeviceGroup ? deviceRole : undefined,
+      scheduleLast,
     })
     onClose()
   }
@@ -109,6 +121,18 @@ function AddExamModal({ day, resourceGroups, allExams, onClose, onAdd }: AddExam
             <select value={resourceGroupId} onChange={e => setResourceGroupId(e.target.value)} style={inputS}>
               {resourceGroups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
             </select>
+          </FormRow>
+          {isDeviceGroup && (
+            <FormRow label="Gerätezyklus">
+              <select value={deviceRole} onChange={e => setDeviceRole(e.target.value as 'attach' | 'return')} style={inputS}>
+                <option value="attach">{DEVICE_ROLE_LABELS.attach}</option>
+                <option value="return">{DEVICE_ROLE_LABELS.return}</option>
+              </select>
+            </FormRow>
+          )}
+          <FormRow label="Immer zuletzt">
+            <input type="checkbox" checked={scheduleLast} onChange={e => setScheduleLast(e.target.checked)}
+              style={{ width: '18px', height: '18px', accentColor: '#3b82f6' }} />
           </FormRow>
           <FormRow label="Umsatz (€)">
             <input type="number" min={0} max={9999} value={revenueEur}
@@ -289,6 +313,19 @@ function ExamCard({ exam, resourceGroups, allExams, isDragging = false, isOverla
                 {resourceGroups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
               </select>
             </FormRow>
+            {group?.groupType === 'device_count' && (
+              <FormRow label="Gerätezyklus">
+                <select value={exam.deviceRole ?? 'attach'} onChange={e => updateExamination(exam.id, { deviceRole: e.target.value as 'attach' | 'return' })} style={inputS}>
+                  <option value="attach">{DEVICE_ROLE_LABELS.attach}</option>
+                  <option value="return">{DEVICE_ROLE_LABELS.return}</option>
+                </select>
+              </FormRow>
+            )}
+            <FormRow label="Immer zuletzt">
+              <input type="checkbox" checked={exam.scheduleLast ?? false}
+                onChange={e => updateExamination(exam.id, { scheduleLast: e.target.checked })}
+                style={{ width: '18px', height: '18px', accentColor: '#3b82f6' }} />
+            </FormRow>
             <FormRow label="Parallel mit">
               <select value={exam.parallelWith ?? ''} onChange={e => updateExamination(exam.id, { parallelWith: e.target.value || null })} style={inputS}>
                 <option value="">— keine —</option>
@@ -321,9 +358,11 @@ interface DayColumnProps {
   resourceGroups: ResourceGroup[]
   allExams: Examination[]
   onAddExam: (day: DayNumber) => void
+  /** Shown in the header, e.g. when Tag 3 is folded into Tag 2 (2-day program) */
+  hint?: string
 }
 
-function DayColumn({ day, exams, resourceGroups, allExams, onAddExam }: DayColumnProps) {
+function DayColumn({ day, exams, resourceGroups, allExams, onAddExam, hint }: DayColumnProps) {
   const colors = DAY_COLORS[day]
   const sortedExams = [...exams].sort((a, b) => a.order - b.order)
   const ids = sortedExams.map(e => e.id)
@@ -346,7 +385,7 @@ function DayColumn({ day, exams, resourceGroups, allExams, onAddExam }: DayColum
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       }}>
         <span style={{ fontWeight: 700, fontSize: '0.9rem', color: colors.header }}>{DAY_LABELS[day]}</span>
-        <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>{sortedExams.length} Untersuchungen</span>
+        <span style={{ fontSize: '0.75rem', color: hint ? '#f97316' : '#94a3b8' }}>{hint ?? `${sortedExams.length} Untersuchungen`}</span>
       </div>
 
       {/* Sortable items */}
@@ -401,6 +440,7 @@ function ResourceGroupsPanel({ resourceGroups, allExams }: ResourceGroupsPanelPr
   const [newGroupName, setNewGroupName] = useState('')
   const [newGroupType, setNewGroupType] = useState<ResourceGroupType>('time_based')
   const [newGroupDeviceCount, setNewGroupDeviceCount] = useState<number | null>(null)
+  const [newGroupStaffType, setNewGroupStaffType] = useState<keyof StaffConfig>('mfaFunktionsdiagnostik')
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
   const handleAddGroup = () => {
@@ -411,6 +451,7 @@ function ResourceGroupsPanel({ resourceGroups, allExams }: ResourceGroupsPanelPr
       slotsPerDay: newGroupDeviceCount ?? 4,
       groupType: newGroupType,
       deviceCount: newGroupType === 'staff_multiplied' ? null : (newGroupDeviceCount ?? 1),
+      staffType: newGroupType === 'staff_multiplied' ? newGroupStaffType : undefined,
     })
     setNewGroupName('')
     setNewGroupDeviceCount(null)
@@ -472,7 +513,16 @@ function ResourceGroupsPanel({ resourceGroups, allExams }: ResourceGroupsPanelPr
                           style={{ width: '60px', padding: '0.2rem 0.35rem', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '0.82rem' }}
                         />
                       ) : (
-                        <span style={{ color: '#94a3b8', fontSize: '0.8rem' }}>— (Personal)</span>
+                        <select
+                          value={group.staffType ?? 'mfaFunktionsdiagnostik'}
+                          onChange={e => updateResourceGroup(group.id, { staffType: e.target.value as keyof StaffConfig })}
+                          title="Welches Personal bedient diese Gruppe?"
+                          style={{ padding: '0.2rem 0.35rem', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '0.8rem' }}
+                        >
+                          {(Object.keys(STAFF_LABELS) as (keyof StaffConfig)[]).map(k => (
+                            <option key={k} value={k}>{STAFF_LABELS[k]}</option>
+                          ))}
+                        </select>
                       )}
                     </td>
                     <td style={tdS}>{assignedCount}</td>
@@ -517,6 +567,16 @@ function ResourceGroupsPanel({ resourceGroups, allExams }: ResourceGroupsPanelPr
                     <option value="staff_multiplied">Personal</option>
                   </select>
                 </div>
+                {newGroupType === 'staff_multiplied' && (
+                  <div>
+                    <label style={labelS}>Personal</label>
+                    <select value={newGroupStaffType} onChange={e => setNewGroupStaffType(e.target.value as keyof StaffConfig)} style={inputS}>
+                      {(Object.keys(STAFF_LABELS) as (keyof StaffConfig)[]).map(k => (
+                        <option key={k} value={k}>{STAFF_LABELS[k]}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 {newGroupType !== 'staff_multiplied' && (
                   <div>
                     <label style={labelS}>Anzahl Geräte</label>
@@ -619,6 +679,7 @@ export default function Untersuchungen() {
   if (!activeScenario) return null
 
   const { examinations, resourceGroups } = activeScenario
+  const programDays = activeScenario.resourceConfig.scheduleConfig.programDays ?? 3
   const activeExam = activeId ? examinations.find(e => e.id === activeId) : null
 
   return (
@@ -646,6 +707,7 @@ export default function Untersuchungen() {
               resourceGroups={resourceGroups}
               allExams={examinations}
               onAddExam={setAddExamDay}
+              hint={day === 3 && programDays === 2 ? 'zählt als Tag 2 (2-Tage-Programm)' : undefined}
             />
           ))}
         </div>

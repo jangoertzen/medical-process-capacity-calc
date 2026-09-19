@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUT = path.join(__dirname, '../docs/screenshots');
-const BASE = 'http://localhost:5174';
+const BASE = 'http://localhost:5173';
 
 const PAGES = [
   { url: '/dashboard',       file: 'dashboard.png',       waitFor: 2000 },
@@ -12,6 +12,7 @@ const PAGES = [
   { url: '/ressourcen',      file: 'ressourcen.png',      waitFor: 1500 },
   { url: '/szenarien',       file: 'szenarien.png',       waitFor: 1500 },
   { url: '/diagramme',       file: 'diagramme.png',       waitFor: 2000 },
+  { url: '/optimierung',     file: 'optimierung.png',     waitFor: 1500 },
 ];
 
 const browser = await puppeteer.launch({

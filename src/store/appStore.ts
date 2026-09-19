@@ -17,6 +17,7 @@ import type {
 } from '@/types';
 import { defaultExaminations, defaultResourceGroups, defaultResourceConfig } from '@/data/defaultData';
 import { calculateCapacity } from '@/lib/calculator';
+import { normalizeScenario } from '@/lib/normalize';
 
 function makeDefaultScenario(): Scenario {
   const exams = defaultExaminations;
@@ -47,6 +48,8 @@ interface AppState {
   addExamination: (patch: Omit<Examination, 'id'>) => void;
   deleteExamination: (examId: string) => void;
   reorderExaminationsForDay: (day: DayNumber, orderedIds: string[]) => void;
+  /** Sets participationPercent for many exams at once (examId → percent), one recalculation */
+  applyParticipation: (levels: Record<string, number>) => void;
 
   updateOpeningHours: (weekday: Weekday, intervals: TimeInterval[]) => void;
   updateStaff: (patch: Partial<StaffConfig>) => void;
@@ -108,6 +111,11 @@ export const useAppStore = create<AppState>()(
         const exam = scenario.examinations.find(e => e.id === examId);
         if (!exam) return;
         Object.assign(exam, patch);
+        // The device role only exists inside device_count groups
+        if (patch.resourceGroupId) {
+          const isDevice = scenario.resourceGroups.find(g => g.id === exam.resourceGroupId)?.groupType === 'device_count';
+          exam.deviceRole = isDevice ? (exam.deviceRole ?? 'attach') : undefined;
+        }
         scenario.results = calculateCapacity(scenario.examinations, scenario.resourceGroups, scenario.resourceConfig);
       }),
 
@@ -142,6 +150,15 @@ export const useAppStore = create<AppState>()(
         scenario.results = calculateCapacity(scenario.examinations, scenario.resourceGroups, scenario.resourceConfig);
       }),
 
+      applyParticipation: (levels) => set(state => {
+        const scenario = state.scenarios.find(s => s.id === state.activeScenarioId);
+        if (!scenario) return;
+        for (const exam of scenario.examinations) {
+          if (exam.id in levels) exam.participationPercent = levels[exam.id];
+        }
+        scenario.results = calculateCapacity(scenario.examinations, scenario.resourceGroups, scenario.resourceConfig);
+      }),
+
       reorderExaminationsForDay: (day, orderedIds) => set(state => {
         const scenario = state.scenarios.find(s => s.id === state.activeScenarioId);
         if (!scenario) return;
@@ -149,7 +166,8 @@ export const useAppStore = create<AppState>()(
           const exam = scenario.examinations.find(e => e.id === id);
           if (exam) exam.order = index + 1;
         });
-        // No recalculation needed — order doesn't affect capacity
+        // Order is the scheduler's tie-breaker, so it can change validated capacity
+        scenario.results = calculateCapacity(scenario.examinations, scenario.resourceGroups, scenario.resourceConfig);
       }),
 
       updateOpeningHours: (weekday, intervals) => set(state => {
@@ -241,6 +259,16 @@ export const useAppStore = create<AppState>()(
         activeScenarioId: state.activeScenarioId,
         compareScenarioIds: state.compareScenarioIds,
       }),
+      // Saved data may predate newer fields and code: fill them in and recompute the results.
+      merge: (persisted, current) => {
+        const saved = persisted as Partial<AppState> | undefined;
+        if (!saved?.scenarios?.length) return current;
+        const scenarios = saved.scenarios.map(s => {
+          const n = normalizeScenario(s);
+          return { ...n, results: calculateCapacity(n.examinations, n.resourceGroups, n.resourceConfig) };
+        });
+        return { ...current, ...saved, scenarios };
+      },
     },
   ),
 );

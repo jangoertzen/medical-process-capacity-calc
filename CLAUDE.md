@@ -2,64 +2,90 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Deep dive on the model (formulas, scheduler, worked example, known limits): [`docs/FUNKTIONSWEISE.md`](docs/FUNKTIONSWEISE.md) (German). UI/user docs: [`README.md`](README.md).
+
 ## Commands
 
 ```bash
 npm run dev        # Start dev server at localhost:5173
 npm run build      # Type-check (tsc -b) then Vite build
-npm run lint       # ESLint
 npm run preview    # Preview production build
+npm run lint       # ESLint 9 flat config (eslint.config.js); passes on a clean checkout
+node scripts/take-screenshots.mjs   # Regenerates docs/screenshots; expects the app on :5173
 ```
 
-There are no tests. There is no test runner configured.
+There are no tests and no test runner. `npx tsc -b` and `npm run lint` are the only automated checks (both pass on a clean checkout).
 
 ## Architecture
 
-This is a **single-page React app** for medical check-up capacity analysis. It models a 3-day patient program (Tag 1/2/3) with overlapping patient cohorts running concurrently across the week.
+Single-page React 19 app (all UI text is German) for medical check-up capacity analysis. It models a 3-day patient program (Tag 1/2/3, optionally 2 days) with overlapping patient cohorts running concurrently across the week. No backend; all data lives in the browser.
 
 ### Data Flow
 
 ```
 defaultData.ts  →  appStore.ts  →  calculator.ts  →  UI components
 (typed defaults)   (Zustand/immer)   (pure fn)        (pages + components)
+                                  →  scheduler.ts (called by calculator for validation, and by UI for Gantt/wait times)
 ```
 
-State lives entirely in **`src/store/appStore.ts`** (Zustand + immer + persist to `localStorage` key `process-calc-v6`). Every mutation calls `calculateCapacity()` immediately and stores results in `scenario.results`. The store is never read directly from components — always via `useAppStore(selector)`.
+State lives in **`src/store/appStore.ts`** (Zustand + immer + `persist` to `localStorage` key **`process-calc-v18`**). Nearly every mutation calls `calculateCapacity()` immediately and stores the result in `scenario.results` (exceptions: `reorderExaminationsForDay`, `renameScenario`, compare toggles). Components read only via `useAppStore(selector)`.
+
+A **Scenario** = examinations + resource groups + resource config + `results`. The header dropdown switches the active scenario; all edits apply to the active one. Comparison is limited to exactly 2 scenarios (`toggleCompareScenario`).
 
 ### Core Calculation Model (`src/lib/calculator.ts`)
 
-The capacity model is **concurrent cohorts**: on any weekday, patients from multiple cohorts (started on different days) are present simultaneously, each at a different stage (Tag 1, 2, or 3).
+**Concurrent cohorts**: on any weekday, patients from several cohorts (started on different days) are present, each in a different stage (Tag 1/2/3). Time is counted in **working days** (Mon–Fri, no weekends); offset 5 = same weekday next week.
 
-Key concepts:
-- **`startDays`**: which weekdays new cohorts begin (e.g. Mon/Tue/Wed). `weeklyThroughput = maxPatientsPerCohort × startDays.length`.
-- **`visitDayOffsets`** and **`lzAnlegenDay`**: auto-determined by the calculator — it tries all valid combinations (tag2: 1–5d, tag3: tag2+1–tag2+5d, lzAnlegenDay: 1 or 2) and picks the one with highest capacity. No device return scheduling.
-- **`device_count` groups** (Langzeit-EKG, Langzeit-RR): hard cap = `floor(deviceCount / (lzPercent / 100))`.
-- **`time_based` groups** (Funktionsraum, Ultraschall/arzt-sono): `floor(deviceCount × openingMinutes / totalDemandPerPatient)`. `arzt-sono` is `time_based` with `deviceCount=1` because there is only 1 ultrasound machine — all sono exams queue through it regardless of how many doctors are available.
-- **`staff_multiplied` groups** (Arzt-Sprechzeit, MFA-Kapazität): `floor(staffCount × openingMinutes / totalDemandPerPatient)`.
-- **Scheduler validation**: after analytical capacity is computed, the scheduler simulates the schedule; if exams exceed opening hours (e.g. due to `maxStayMinutes`), `maxPatientsPerCohort` is reduced.
+- **`startDays`**: weekdays on which cohorts start. `weeklyThroughput = maxPatientsPerCohort × startDays.length`.
+- **`visitDayOffsets` / `lzAnlegenDay`**: NOT user inputs. `calculateCapacity` grid-searches all valid combos (Tag 2: 1–5 d; Tag 3: Tag2+1…Tag2+5 d; `lzAnlegenDay` 1 or 2; for 2-day programs only Tag 2) and keeps the highest capacity (first wins on ties). Result: `results.bestVisitDayOffsets`, `results.bestLzAnlegenDay`. Always run a scenario through `applyBestSchedule(scenario)` (calculator.ts) before handing it to the scheduler/Gantt; Dashboard, Diagramme > Tagesplan and ScenarioCompare do.
+- **`programDays` (2|3)**: when 2, `applyProgramDays` moves all Tag-3 exams to Tag 2. Toggle "Programmdauer" on Dashboard and Ressourcen.
+- **Capacity per `groupType`** (patients per cohort):
+  - `device_count` (Langzeit-EKG/RR): `floor(deviceCount / participation)`, only on weekdays where the attach stage (`deviceRole='attach'`) is active. `deviceRole='return'` exams are ignored (no device-return scheduling).
+  - `time_based` (Funktionsraum, Ultraschall, Ergometrie): `floor(deviceCount × openingMinutes / demandPerPatient)`. `arzt-sono` has `deviceCount=1` because there is one ultrasound machine — all sono exams serialize through it.
+  - `staff_multiplied` (Arztgespräch, Blutentnahmen): `floor(staffCount × openingMinutes / demandPerPatient)`; `getStaffCount` reads `group.staffType`.
+  - Every `ResourceCapacityResult` carries `rawCapacity` (unrounded) next to `limitingCapacity` (its floor).
+- **Demand per patient** = sum over active stages of step durations × `participationPercent/100`.
+- **Bottleneck**: capacity is evaluated for Week 2 (steady state) only; `N` = min over all resources and weekdays (one `N` for the whole week). `isBottleneck` marks the resource(s) with the tightest *analytical* capacity (before scheduler validation), so a name exists even if the scheduler lowered `N`. The dashboard's *displayed* bottlenecks come from a +1-unit sensitivity run (`computeQuickThroughput`, which is now just `calculateCapacity(...).weeklyThroughput`, i.e. validated), not from `isBottleneck`.
+- **Scheduler validation**: after the analytical `N`, `scheduleFitsOpeningHours` builds the Week-2 schedule and decrements `N` while any exam ends after `openingMinutes` (this is where `maxStayMinutes`, `breakBetweenExams` and waiting take effect).
 
-**Parallel step resolution** (`resolveSteps`): When exam A has `parallelWith=B` AND B has `parallelWith=A` AND they share the same `resourceGroupId`, they merge into one step with `duration = max(A, B)`. Cross-group parallel exams (e.g. LZ-EKG anlegen ↔ LZ-RR anlegen, which are in different groups) each create independent steps in their own group.
+**Parallel step resolution** (`resolveSteps`): exams A and B merge into one step (`duration = max`) only if `A.parallelWith=B`, `B.parallelWith=A` **and** same `resourceGroupId`. Cross-group partners (LZ-EKG ↔ LZ-RR anlegen) stay separate steps in the calculator. The scheduler (`buildExamBlocks`) merges mutual partners regardless of group and occupies both groups at once.
+
+### Scheduler (`src/lib/scheduler.ts`)
+
+`buildWeekSchedule(exams, groups, config, nPatients)` → `WeekdaySchedule[]` for abs days 0–14 (Week 1 ramp-up, Week 2 steady state, Week 3 ramp-down). Times are **minutes since opening** on a timeline with closed gaps between opening intervals removed; blocks never straddle a gap; `toClockMin` (calculator.ts) converts back to clock times (Gantt uses it). Exams are sorted by `order` (tie-breaker of the greedy choice). Greedy per patient: contended blocks first, independent blocks into gaps, then blocks with a `mustFollowExamId` predecessor (after it), "Abschlussgespräch" last; stages with more exams are scheduled first. Resource lanes = `deviceCount` / `getStaffCount` (`device_count` groups = 1 lane). `analyzeScheduleDay` derives `actualSlots` and wait times per group.
+
+### Data-driven special behaviour (no name/id matching)
+
+Special cases are data fields, editable in the Untersuchungen page: `Examination.deviceRole` (`attach`/`return`, only in `device_count` groups; drives Langzeit attach/return handling), `Examination.scheduleLast` (scheduled last, e.g. Abschlussgespräch), `ResourceGroup.staffType` (which `StaffConfig` pool serves a `staff_multiplied` group), `Examination.participationPercent` (per-exam, also in the scheduler: patient `p` gets the exam if `p < round(N × pct)`). Groups/exams can be renamed freely. Saved/imported data that predates these fields is upgraded by `normalizeScenario` (`src/lib/normalize.ts`, the only place with the old name/id heuristics); the store's `persist.merge` also recomputes all results on load. New optional fields belong there. Only cosmetic leftovers remain: `ROOM_ORDER` in the Gantt (room display order) and the default group ids in `defaultData.ts`. Sensitivity/bottleneck analysis raises all `device_count` groups together.
+
+### Fields stored but not used by the model
+
+`Examination.isAssumedDefault`, `ResourceGroup.note`; `ResourceGroup.slotsPerDay` only serves as fallback device count. (`mustFollowExamId` and `order` are used by the scheduler only, not by the analytical calculator.)
+
+### Revenue optimizer (`src/lib/optimizer.ts`, page `src/pages/Optimierung.tsx`)
+
+`optimizeParticipation(scenario, maxWeeklyPatients)` maximizes `min(weeklyCapacity, demandCap) × Σ revenueEur × pct` over per-exam participation levels in 10 % steps within `Examination.participationMin/Max` (default 0/100). Both patient count and percentages are free; the demand cap is what keeps it sensible (without it the optimum strips nearly all exams). Heuristic: greedy descent (uses unrounded `rawCapacity` of the binding resources to break rounding plateaus) + local search (single and pair moves), started from the upper bounds and from the current values. `return`-role exams are not variables; they mirror their attach exam. For speed the search holds the visit-offset/LZ-day combination fixed (`CapacityOptions.fixedCombo`, `analyticCapacity`) and uses the demand cap as `CapacityOptions.maxPatientsPerCohort`; candidates and all reported numbers are re-evaluated with the full `calculateCapacity`. It never recommends less revenue than the current setting. The page runs it on click (about 0.3–2 s), marks the result stale on any scenario change, and applies levels via the store action `applyParticipation` (optionally into a new scenario first). Quality check used during development: matches the best of 40 random-restart hill climbs.
 
 ### Types (`src/types/index.ts`)
 
-All interfaces are in one file. Key ones:
-- `Examination`: one row in the exam table — `day` (1/2/3), `parallelWith` (exam name), `resourceGroupId`
-- `ResourceGroup`: groups exams for capacity calculation — `groupType` determines the formula
-- `ScheduleConfig`: `startDays` + `visitDayOffsets` + `lzAnlegenDay` (latter two auto-determined by calculator)
-- `WeeklyCapacityResult` → `WeekdayCapacityResult[]` → `ResourceCapacityResult[]`
+All interfaces in one file: `Examination`, `ResourceGroup` (`groupType` picks the formula), `ResourceConfig` (`openingHours` = intervals per weekday in minutes since midnight, `staff`, `scheduleConfig`), `Scenario`, `WeeklyCapacityResult` → `WeekdayCapacityResult[]` → `ResourceCapacityResult[]`, plus `threeWeekData: DayCapacityResult[]`.
 
 ### Routing & Pages (`src/App.tsx`)
 
-Hash-based navigation via react-router-dom. Pages: `dashboard`, `untersuchungen`, `ressourcen`, `szenarien`, `diagramme`, `import`.
+`BrowserRouter` (path-based, not hash-based) with `Sidebar` + `Header` layout and an `ErrorBoundary`. Routes: `/dashboard` (default), `/untersuchungen`, `/ressourcen`, `/szenarien`, `/diagramme`, `/optimierung`, `/import-export`. The `AppPage`/`activePage` state in the store is vestigial; navigation is driven by the URL. `components/dashboard/WeeklyGrid.tsx` is an empty stub.
 
 ### Styling
 
-**Tailwind CSS v4** via `@tailwindcss/vite` plugin — no `tailwind.config.js`. Most components use inline styles (`style={{...}}`) rather than Tailwind class names. Radix UI primitives are available but rarely used — prefer inline styles for consistency.
+**Tailwind CSS v4** via `@tailwindcss/vite` (no `tailwind.config.js`), but nearly all components use inline `style={{...}}`. Match that. Charts: `recharts` only in `ResourceSensitivityChart`; the Gantt is custom DOM.
 
-### State Persistence
+### State Persistence & Import/Export
 
-localStorage key is **`process-calc-v13`**. Bump the version key in `appStore.ts` when making breaking changes to the persisted state shape (`scenarios`, `activeScenarioId`, `compareScenarioIds`).
+Persisted: `scenarios`, `activeScenarioId`, `compareScenarioIds` (via `partialize`). When the persisted shape changes, bump the key **in two places**: `name` in `appStore.ts` and `version` + `storeKey` in `src/pages/ImportExport.tsx`. Import validates minimal shape, recomputes results, writes straight to `localStorage`, then reloads the page.
 
 ### Path Alias
 
 `@/` resolves to `src/` (configured in both `vite.config.ts` and `tsconfig.json`).
+
+### Repo extras
+
+`Checkup_Engpassanalyse_einfach.xlsx` is the original slot-based Excel model the defaults came from (sheets Untersuchungen / Ressourcen / Anleitung); the app supersedes it. Not read by any code.

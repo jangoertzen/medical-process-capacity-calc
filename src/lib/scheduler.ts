@@ -1,5 +1,5 @@
-import type { Examination, ResourceGroup, ResourceConfig, DayNumber, Weekday } from '@/types';
-import { getTotalOpeningMinutes } from './calculator';
+import type { Examination, ResourceGroup, ResourceConfig, DayNumber, Weekday, TimeInterval } from '@/types';
+import { getTotalOpeningMinutes, getStaffCount, isDeviceAttach, isDeviceReturn } from './calculator';
 
 const WEEKDAY_ORDER: Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 
@@ -8,6 +8,11 @@ const WEEKDAY_ORDER: Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 // ---------------------------------------------------------------------------
 
 export interface ExamItem {
+  examId: string;
+  /** Exam id this one must be scheduled after (same patient, same visit day) */
+  mustFollowExamId: string | null;
+  /** Always scheduled as the last exam of the patient's visit */
+  scheduleLast: boolean;
   name: string;
   room: string;
   groupId: string;
@@ -50,25 +55,21 @@ interface ScheduledEntry {
   end: number;
 }
 
-/** True when exam belongs to a Langzeit device group and is an "anlegen" step */
-function isLzAnlegen(exam: Examination): boolean {
-  return (
-    (exam.resourceGroupId === 'langzeit-ekg' || exam.resourceGroupId === 'langzeit-rr') &&
-    exam.name.toLowerCase().includes('anlegen')
-  );
+/** True if this block must be scheduled last (e.g. Abschlussgespräch) */
+function isLastBlock(block: ExamBlock): boolean {
+  return block.items.some(it => it.scheduleLast);
 }
 
-/** True when exam belongs to a Langzeit device group and is an "abnehmen" step */
-function isLzAbnehmen(exam: Examination): boolean {
-  return (
-    (exam.resourceGroupId === 'langzeit-ekg' || exam.resourceGroupId === 'langzeit-rr') &&
-    (exam.name.toLowerCase().includes('abnehmen') || exam.name.toLowerCase().includes('abnahme'))
-  );
-}
-
-/** True if this block is the Abschlussgespräch (must always be scheduled last) */
-function isAbschluss(block: ExamBlock): boolean {
-  return block.items.some(it => it.name.toLowerCase().includes('abschlussgespräch'));
+function itemOf(e: Examination): ExamItem {
+  return {
+    examId: e.id,
+    mustFollowExamId: e.mustFollowExamId ?? null,
+    scheduleLast: e.scheduleLast ?? false,
+    name: e.name,
+    room: e.room,
+    groupId: e.resourceGroupId,
+    durationMin: e.durationMin,
+  };
 }
 
 function buildExamBlocks(exams: Examination[]): ExamBlock[] {
@@ -89,8 +90,8 @@ function buildExamBlocks(exams: Examination[]): ExamBlock[] {
         const groupIds = [...new Set([exam.resourceGroupId, partner.resourceGroupId])];
         blocks.push({
           items: [
-            { name: exam.name, room: exam.room, groupId: exam.resourceGroupId, durationMin: exam.durationMin },
-            { name: partner.name, room: partner.room, groupId: partner.resourceGroupId, durationMin: partner.durationMin },
+            itemOf(exam),
+            itemOf(partner),
           ],
           duration: Math.max(exam.durationMin, partner.durationMin),
           groupIds,
@@ -101,7 +102,7 @@ function buildExamBlocks(exams: Examination[]): ExamBlock[] {
     }
 
     blocks.push({
-      items: [{ name: exam.name, room: exam.room, groupId: exam.resourceGroupId, durationMin: exam.durationMin }],
+      items: [itemOf(exam)],
       duration: exam.durationMin,
       groupIds: [exam.resourceGroupId],
       primaryGroupId: exam.resourceGroupId,
@@ -111,22 +112,14 @@ function buildExamBlocks(exams: Examination[]): ExamBlock[] {
   return blocks;
 }
 
-function getGroupSlots(
-  group: ResourceGroup,
-  examinations: Examination[],
-  config: ResourceConfig,
-): number {
+function getGroupSlots(group: ResourceGroup, config: ResourceConfig): number {
   switch (group.groupType) {
     case 'time_based':
       return Math.max(1, group.deviceCount ?? 1);
     case 'device_count':
       return 1; // setup is serial (1 MFA in Geräteraum at a time)
-    case 'staff_multiplied': {
-      const groupExams = examinations.filter(e => group.examinationIds.includes(e.id));
-      if (groupExams.some(e => e.staffRole === 'Arzt')) return config.staff.doctorCount;
-      if (group.id === 'mfa-kapazitat') return config.staff.mfaLabor;
-      return config.staff.mfaFunktionsdiagnostik;
-    }
+    case 'staff_multiplied':
+      return getStaffCount(group, config.staff);
   }
 }
 
@@ -153,9 +146,11 @@ export function buildWeekSchedule(
   nPatients: number,
 ): WeekdaySchedule[] {
   const programDays = config.scheduleConfig.programDays ?? 3;
-  const examinations = programDays === 2
+  // Sorted by `order` (the drag & drop position): it is the tie-breaker of the greedy scheduler.
+  const examinations = (programDays === 2
     ? rawExaminations.map(e => e.day === 3 ? { ...e, day: 2 as DayNumber } : e)
-    : rawExaminations;
+    : [...rawExaminations]
+  ).sort((a, b) => a.order - b.order);
   const { startDays, visitDayOffsets } = config.scheduleConfig;
   const lzAnlegenDay = config.scheduleConfig.lzAnlegenDay;
 
@@ -199,6 +194,7 @@ export function buildWeekSchedule(
       resourceGroups,
       config,
       nPatients,
+      config.openingHours[weekday],
     );
 
     schedules.push({
@@ -226,59 +222,53 @@ function scheduleDay(
   resourceGroups: ResourceGroup[],
   config: ResourceConfig,
   nPatients: number,
+  intervals: TimeInterval[],
 ): ScheduledExam[] {
-  // Derive participation rates from per-exam participationPercent
-  const lzAnlegenExam = examinations.find(e => isLzAnlegen(e));
-  const ergoExam = examinations.find(e => e.resourceGroupId === 'ergometrie');
-  const lzParticipation = (lzAnlegenExam?.participationPercent ?? 100) / 100;
-  const ergoParticipation = (ergoExam?.participationPercent ?? 100) / 100;
-  const nLzPatients = Math.round(nPatients * lzParticipation);
-  const nErgoPatients = Math.round(nPatients * ergoParticipation);
-
   // Shared resource slots across all patient groups
   const resourceSlots = new Map<string, number[]>();
   for (const group of resourceGroups) {
-    const slotCount = getGroupSlots(group, examinations, config);
+    const slotCount = getGroupSlots(group, config);
     resourceSlots.set(group.id, Array(Math.max(1, slotCount)).fill(0));
   }
 
-  /** True if this block involves LZ anlegen or abnehmen exams */
-  function isLzBlock(block: ExamBlock): boolean {
-    return block.groupIds.some(gid => gid === 'langzeit-ekg' || gid === 'langzeit-rr');
-  }
-
-  /** True if this block involves Ergometrie exams */
-  function isErgoBlock(block: ExamBlock): boolean {
-    return block.groupIds.some(gid => gid === 'ergometrie');
-  }
-
-  // Build exam blocks per visit stage — separate variants for LZ and Ergo
+  // Exams per visit stage. Device "return" exams are never scheduled; "attach" exams
+  // are attributed to the lzAnlegenDay stage regardless of their stored day.
+  const stageExamsOf = new Map<DayNumber, Examination[]>();
+  // All blocks of a stage: used for contention analysis and stage priority only
   const stageBlocksAll = new Map<DayNumber, ExamBlock[]>();
-  const stageBlocksNoLz = new Map<DayNumber, ExamBlock[]>();
-  const stageBlocksNoErgo = new Map<DayNumber, ExamBlock[]>();
-  const stageBlocksNoLzNoErgo = new Map<DayNumber, ExamBlock[]>();
 
   for (const stage of activeStages) {
     let stageExams = examinations.filter(e => {
       if (e.day !== stage) return false;
-      if (isLzAbnehmen(e)) return false;
-      if (isLzAnlegen(e) && lzAnlegenDay !== stage) return false;
+      if (isDeviceReturn(e)) return false;
+      if (isDeviceAttach(e) && lzAnlegenDay !== stage) return false;
       return true;
     });
 
     if (stage === lzAnlegenDay) {
-      const anlegen = examinations.filter(
-        e => isLzAnlegen(e) && !stageExams.includes(e),
-      );
-      stageExams = [...stageExams, ...anlegen];
+      const attach = examinations.filter(e => isDeviceAttach(e) && !stageExams.includes(e));
+      stageExams = [...stageExams, ...attach];
     }
 
-    const allBlocks = buildExamBlocks(stageExams);
-    stageBlocksAll.set(stage, allBlocks);
-    stageBlocksNoLz.set(stage, allBlocks.filter(b => !isLzBlock(b)));
-    stageBlocksNoErgo.set(stage, allBlocks.filter(b => !isErgoBlock(b)));
-    stageBlocksNoLzNoErgo.set(stage, allBlocks.filter(b => !isLzBlock(b) && !isErgoBlock(b)));
+    stageExamsOf.set(stage, stageExams);
+    stageBlocksAll.set(stage, buildExamBlocks(stageExams));
   }
+
+  // Patient p (0-based) receives an exam if p < round(nPatients × participation).
+  // Thresholds are nested, so patient 1 gets everything and later patients fewer exams.
+  const nParticipating = (e: Examination) =>
+    Math.round(nPatients * ((e.participationPercent ?? 100) / 100));
+  const patientBlocksCache = new Map<string, ExamBlock[]>();
+  const blocksForPatient = (stage: DayNumber, p: number): ExamBlock[] => {
+    const present = (stageExamsOf.get(stage) ?? []).filter(e => p < nParticipating(e));
+    const key = `${stage}:${present.map(e => e.id).join(',')}`;
+    let blocks = patientBlocksCache.get(key);
+    if (!blocks) {
+      blocks = buildExamBlocks(present);
+      patientBlocksCache.set(key, blocks);
+    }
+    return blocks;
+  };
 
   const result: ScheduledExam[] = [];
 
@@ -301,11 +291,24 @@ function scheduleDay(
   const breakMin = (config.scheduleConfig.breakBetweenExams ?? false) ? 5 : 0;
 
   /** Earliest time a block can start given patient availability and resource slots */
+  // The timeline is "minutes since opening" with closed gaps (e.g. lunch) removed;
+  // gapAt lists the timeline positions where one interval ends and the next begins.
+  const gapAt: number[] = [];
+  intervals.reduce((acc, iv, i) => {
+    const end = acc + Math.max(0, iv.endMin - iv.startMin);
+    if (i < intervals.length - 1) gapAt.push(end);
+    return end;
+  }, 0);
+
   const earliestStart = (block: ExamBlock, earliest: number) => {
     let start = earliest;
     for (const groupId of block.groupIds) {
       const slots = resourceSlots.get(groupId);
       if (slots && slots.length > 0) start = Math.max(start, Math.min(...slots));
+    }
+    // A block must not straddle a closed gap: push it to the start of the next interval.
+    for (const g of gapAt) {
+      if (start < g && start + block.duration > g) start = g;
     }
     return start;
   };
@@ -317,7 +320,7 @@ function scheduleDay(
   const groupStageSet = new Map<string, Set<DayNumber>>();
   for (const stage of activeStages) {
     for (const block of (stageBlocksAll.get(stage) ?? [])) {
-      if (isAbschluss(block)) continue;
+      if (isLastBlock(block)) continue;
       for (const gid of block.groupIds) {
         groupBlockCount.set(gid, (groupBlockCount.get(gid) ?? 0) + 1);
         if (!groupStageSet.has(gid)) groupStageSet.set(gid, new Set());
@@ -343,12 +346,8 @@ function scheduleDay(
 
   for (const stage of stagesByExamCount) {
     for (let p = 0; p < nPatients; p++) {
-      const hasLz = p < nLzPatients;
-      const hasErgo = p < nErgoPatients;
       const patientId = `T${stage}-P${String(p + 1).padStart(2, '0')}`;
-      const blocks = hasLz
-        ? (hasErgo ? (stageBlocksAll.get(stage) ?? []) : (stageBlocksNoErgo.get(stage) ?? []))
-        : (hasErgo ? (stageBlocksNoLz.get(stage) ?? []) : (stageBlocksNoLzNoErgo.get(stage) ?? []));
+      const blocks = blocksForPatient(stage, p);
 
       if (blocks.length === 0) continue;
 
@@ -356,11 +355,22 @@ function scheduleDay(
       // of its resource groups is globally contended on this day.
       const contendedBlocks: ExamBlock[] = [];
       const independentBlocks: ExamBlock[] = [];
-      let abschlussBlock: ExamBlock | null = null;
+      const dependentBlocks: ExamBlock[] = [];
+      const lastBlocks: ExamBlock[] = [];
+
+      // "Folgt nach": blocks whose predecessor is another block of this patient
+      // are scheduled after their predecessor (phase 2b).
+      const blockOf = (examId: string) => blocks.find(b => b.items.some(it => it.examId === examId));
+      const predecessorsOf = (block: ExamBlock) =>
+        block.items
+          .map(it => (it.mustFollowExamId ? blockOf(it.mustFollowExamId) : undefined))
+          .filter((b): b is ExamBlock => !!b && b !== block);
 
       for (const block of blocks) {
-        if (isAbschluss(block)) {
-          abschlussBlock = block;
+        if (isLastBlock(block)) {
+          lastBlocks.push(block);
+        } else if (predecessorsOf(block).length > 0) {
+          dependentBlocks.push(block);
         } else {
           const isIndep = block.groupIds.every(gid => !contendedGroups.has(gid));
           if (isIndep) {
@@ -463,8 +473,38 @@ function scheduleDay(
         scheduled.push({ block: indepBlock, start: bestGapStart, end });
       }
 
+      // Phase 2b: dependent ("Folgt nach") blocks, appended after everything scheduled
+      // so far, hence after their predecessors. Ready blocks first, earliest start wins.
+      const dependentRemaining = [...dependentBlocks];
+      while (dependentRemaining.length > 0) {
+        const isReady = (b: ExamBlock) =>
+          predecessorsOf(b).every(pb => scheduled.some(en => en.block === pb));
+        const candidates = dependentRemaining.filter(isReady);
+        const pool = candidates.length > 0 ? candidates : dependentRemaining; // cycle guard
+        const minTime = blockCount > 0 ? patientFree + breakMin : patientFree;
+        let block = pool[0];
+        let start = earliestStart(block, minTime);
+        for (const b of pool) {
+          const st = earliestStart(b, minTime);
+          if (st < start) { start = st; block = b; }
+        }
+        const end = start + block.duration;
+
+        if (patientArrival < 0) patientArrival = start;
+        else if (end > patientArrival + maxStay) patientArrival = end - maxStay;
+
+        for (const groupId of block.groupIds) {
+          const slots = resourceSlots.get(groupId);
+          if (slots) lockSlot(slots, end);
+        }
+        patientFree = Math.max(patientFree, end);
+        blockCount++;
+        scheduled.push({ block, start, end });
+        dependentRemaining.splice(dependentRemaining.indexOf(block), 1);
+      }
+
       // Phase 3: Schedule Abschlussgespräch last (always the final exam)
-      if (abschlussBlock) {
+      for (const abschlussBlock of lastBlocks) {
         const minTime = blockCount > 0 ? patientFree + breakMin : patientFree;
         const start = earliestStart(abschlussBlock, minTime);
         const end = start + abschlussBlock.duration;
