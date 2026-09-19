@@ -131,6 +131,14 @@ export function reservedMinutes(config: ResourceConfig, groupId: string, weekday
   return reservedAppointments(config, weekday) * (config.dailyBusiness?.minutesPerAppointment[groupId] ?? 0);
 }
 
+/** Resource key of the devices dedicated to one examination (used in results and the scheduler). */
+export const examDeviceKey = (examId: string) => `device:${examId}`;
+
+/** True when the examination has its own device limit (`deviceCount` > 0). */
+export function hasOwnDevices(exam: Examination): boolean {
+  return typeof exam.deviceCount === 'number' && exam.deviceCount > 0;
+}
+
 /** Device cycle: exam that hands out the device (counts on the lzAnlegenDay visit) */
 export function isDeviceAttach(exam: Examination): boolean {
   return exam.deviceRole === 'attach';
@@ -278,6 +286,27 @@ function computeDayResources(
       timePerPatientMin,
       rawCapacity,
       limitingCapacity,
+      isBottleneck: false,
+      utilizationPct: 0,
+    });
+  }
+
+  // Devices dedicated to a single examination: an extra limit next to the group's shared resource
+  for (const exam of examinations) {
+    if (!hasOwnDevices(exam) || isDeviceReturn(exam)) continue;
+    const stage = isDeviceAttach(exam) ? lzAnlegenDay : exam.day;
+    if (!activeStages.includes(stage)) continue;
+    const timePerPatientMin = exam.durationMin * ((exam.participationPercent ?? 100) / 100);
+    if (timePerPatientMin <= 0) continue;
+    const rawCapacity = (Number(exam.deviceCount) * openingMinutes) / timePerPatientMin;
+    resourceResults.push({
+      resourceGroupId: examDeviceKey(exam.id),
+      resourceGroupName: `${exam.name} (Geräte)`,
+      weekday,
+      openingMinutes,
+      timePerPatientMin,
+      rawCapacity,
+      limitingCapacity: Math.floor(rawCapacity),
       isBottleneck: false,
       utilizationPct: 0,
     });

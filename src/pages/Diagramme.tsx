@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react'
 import { useAppStore } from '@/store/appStore'
 import { DayScheduleGantt } from '@/components/charts/DayScheduleGantt'
 import { ResourceSensitivityChart, type SensitivityParam } from '@/components/charts/ResourceSensitivityChart'
-import { computeQuickThroughput, applyBestSchedule } from '@/lib/calculator'
+import { computeQuickThroughput, applyBestSchedule, hasOwnDevices, examDeviceKey } from '@/lib/calculator'
 
 const STAFF_LABEL = { doctorCount: 'Arztgespräch', mfaLabor: 'MFA Labor (Blutentnahmen)', mfaFunktionsdiagnostik: 'MFA Funktionsdiagnostik' } as const
 
@@ -86,6 +86,22 @@ export default function Diagramme() {
           })
         }
       }
+    }
+
+    // Devices dedicated to a single examination (e.g. ECG machines)
+    for (const exam of examinations) {
+      if (!hasOwnDevices(exam)) continue
+      items.push({
+        id: examDeviceKey(exam.id),
+        label: `${exam.name} (Geräte)`,
+        xLabel: 'Anzahl Geräte',
+        currentCount: Number(exam.deviceCount),
+        compute: (n) => computeQuickThroughput(
+          examinations.map(e => e.id === exam.id ? { ...e, deviceCount: n } : e),
+          resourceGroups,
+          resourceConfig,
+        ),
+      })
     }
 
     return items
